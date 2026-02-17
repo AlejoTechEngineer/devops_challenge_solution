@@ -1,0 +1,119 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devops-challenge-dev
+
+bases:
+  - ../../base
+
+# Dev-specific config overrides
+configMapGenerator:
+  - name: app-config
+    behavior: merge
+    literals:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - APP_VERSION=dev-local
+
+# Dev-specific patches: fewer replicas, lower limits, no prod-only restrictions
+patches:
+  # Scale down for local development
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway
+      spec:
+        replicas: 1
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: user-service
+      spec:
+        replicas: 1
+  # Lower resource limits for dev
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api-gateway
+                resources:
+                  requests:
+                    cpu: "50m"
+                    memory: "64Mi"
+                  limits:
+                    cpu: "200m"
+                    memory: "128Mi"
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: user-service
+      spec:
+        template:
+          spec:
+            containers:
+              - name: user-service
+                resources:
+                  requests:
+                    cpu: "50m"
+                    memory: "64Mi"
+                  limits:
+                    cpu: "200m"
+                    memory: "128Mi"
+  # Use local images for kind cluster
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api-gateway
+                image: devops-challenge/api-gateway:local
+                imagePullPolicy: Never
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: user-service
+      spec:
+        template:
+          spec:
+            containers:
+              - name: user-service
+                image: devops-challenge/user-service:local
+                imagePullPolicy: Never
+  # Disable HPA in dev (single replica is fine)
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: api-gateway-hpa
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: user-service-hpa
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+
+# Use a dev-specific secret with a simple password
+secretGenerator:
+  - name: app-secrets
+    behavior: replace
+    literals:
+      - redis-password=devpassword123
+    type: Opaque

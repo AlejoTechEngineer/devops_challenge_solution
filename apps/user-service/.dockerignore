@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test artifacts
+coverage/
+.nyc_output/
+*.test.js
+__tests__/
+
+# Development config
+.env
+.env.*
+.eslintrc*
+.prettierrc*
+nodemon.json
+jest.config.*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Documentation
+docs/
+*.md
+README*
+CHANGELOG*
+
+# Build artifacts
+dist/
+build/
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+Dockerfile*
+.dockerignore
+docker-compose*

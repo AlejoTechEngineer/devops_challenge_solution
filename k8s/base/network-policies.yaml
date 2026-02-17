@@ -1,0 +1,131 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Network Policies — Zero Trust: deny all by default, allow only what's needed
+# Traffic flow: Internet → api-gateway → user-service → redis
+# ─────────────────────────────────────────────────────────────────────────────
+
+---
+# Default deny-all for the namespace — explicit allow-lists below
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}            # Applies to ALL pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow API Gateway to receive external traffic (from ingress / port-forward)
+# and to call User Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 3000        # Accept HTTP traffic on the gateway port
+  egress:
+    # Allow calls to user-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: user-service
+      ports:
+        - port: 3001
+    # Allow DNS resolution (CoreDNS)
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# Allow User Service to receive traffic from API Gateway only
+# and to connect to Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-user-service
+spec:
+  podSelector:
+    matchLabels:
+      app: user-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - port: 3001
+  egress:
+    # Allow calls to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# Allow Redis to receive traffic from User Service only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: user-service
+      ports:
+        - port: 6379
+  egress: []                  # Redis doesn't need to initiate connections
+
+---
+# Allow Prometheus scraper to reach /metrics on both services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraping
+spec:
+  podSelector:
+    matchLabels: {}            # Matches all pods that have /metrics
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - port: 3000
+        - port: 3001

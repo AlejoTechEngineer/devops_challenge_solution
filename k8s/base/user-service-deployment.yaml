@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  labels:
+    app: user-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0       # Zero-downtime deploys
+  template:
+    metadata:
+      labels:
+        app: user-service
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Graceful shutdown: let in-flight requests finish before SIGTERM is sent
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: user-service
+          image: ghcr.io/vipmed-technology/user-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+              name: http
+          env:
+            # Non-sensitive config from ConfigMap
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: USER_SERVICE_PORT
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: NODE_ENV
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: LOG_LEVEL
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_VERSION
+            # Sensitive config from Secret
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: redis-password
+            # Build Redis URL using configmap host + secret password
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          # Liveness: is the process alive and responsive?
+          # Failure → Kubernetes restarts the container
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # Readiness: can the service accept traffic? (Redis connected?)
+          # Failure → removed from Service endpoints (no traffic sent)
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+          # Startup probe: gives time for first-time initialization
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12   # 12 * 5s = 60s max startup time
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Always

@@ -1,0 +1,83 @@
+version: '3.9'
+
+services:
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: devops-challenge-redis
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-devpassword}"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-devpassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ── User Service ───────────────────────────────────────────────────────────
+  user-service:
+    build:
+      context: ./apps/user-service
+      target: final
+    container_name: devops-challenge-user-service
+    environment:
+      PORT: "3001"
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-devpassword}@redis:6379"
+      APP_VERSION: "local"
+    ports:
+      - "3001:3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ── API Gateway ────────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./apps/api-gateway
+      target: final
+    container_name: devops-challenge-api-gateway
+    environment:
+      PORT: "3000"
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      USER_SERVICE_URL: "http://user-service:3001"
+      APP_VERSION: "local"
+    ports:
+      - "3000:3000"
+    depends_on:
+      user-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge

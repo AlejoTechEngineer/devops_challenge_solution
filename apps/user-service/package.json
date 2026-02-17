@@ -1,0 +1,33 @@
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "description": "User management microservice - CRUD operations backed by Redis",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest --coverage --forceExit",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "prom-client": "^15.1.0",
+    "redis": "^4.6.12",
+    "uuid": "^9.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "supertest": "^6.3.4"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": ["src/**/*.js", "!src/**/*.test.js"]
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

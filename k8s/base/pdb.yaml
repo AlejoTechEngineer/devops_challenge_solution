@@ -1,0 +1,23 @@
+---
+# PDB ensures at least 1 api-gateway pod is always available during node drain / rolling updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+
+---
+# PDB ensures at least 1 user-service pod is always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: user-service

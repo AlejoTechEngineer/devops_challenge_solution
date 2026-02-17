@@ -1,0 +1,335 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+# Cancel in-progress runs for the same branch (save CI minutes)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB 1: Lint & Test both services in parallel
+  # ────────────────────────────────────────────────────────────────────────────
+  lint-and-test:
+    name: Lint & Test — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # Don't cancel the other service if one fails
+      matrix:
+        service: [api-gateway, user-service]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.service }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint --if-present
+
+      - name: Run tests with coverage
+        run: npm test -- --ci --coverage --coverageReporters=lcov
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.service }}
+          path: apps/${{ matrix.service }}/coverage/
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB 2: Build Docker images, scan for vulnerabilities, push to registry
+  # ────────────────────────────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    # Only build images on push (not PRs — avoids unnecessary builds)
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+      security-events: write    # Required for Trivy SARIF upload
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, user-service]
+
+    outputs:
+      # Pass the image digest to deploy job for immutable references
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # Auto-generated, no hardcoding
+
+      # ── Image tagging strategy ─────────────────────────────────────────────
+      # Tags applied:
+      #   ghcr.io/org/service:sha-<7chars>    → immutable, used for deploy
+      #   ghcr.io/org/service:develop         → latest develop build
+      #   ghcr.io/org/service:latest          → latest main build (main only)
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.service }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      # ── Multi-platform build + push ────────────────────────────────────────
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/${{ matrix.service }}
+          target: final           # Only build the final production stage
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true        # SLSA provenance for supply chain security
+          sbom: true              # Software Bill of Materials
+
+      # ── Security scanning with Trivy (Bonus) ─────────────────────────────
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.service }}:sha-${{ github.sha }}
+          format: 'sarif'
+          output: trivy-results-${{ matrix.service }}.sarif
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'          # Don't fail build on findings — report only (change to 1 for strict mode)
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB 3: Deploy to DEV on push to develop
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy-dev:
+    name: Deploy → DEV
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: dev
+      url: https://dev.devops-challenge.example.com
+    env:
+      DEPLOY_ENV: dev
+      K8S_NAMESPACE: devops-challenge-dev
+      IMAGE_TAG: sha-${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig (EKS)
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ secrets.EKS_CLUSTER_NAME_DEV }} \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Set up kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Update image tags in kustomize overlay
+        working-directory: k8s/overlays/dev
+        run: |
+          kustomize edit set image \
+            ghcr.io/${{ env.IMAGE_OWNER }}/api-gateway=ghcr.io/${{ env.IMAGE_OWNER }}/api-gateway:${{ env.IMAGE_TAG }} \
+            ghcr.io/${{ env.IMAGE_OWNER }}/user-service=ghcr.io/${{ env.IMAGE_OWNER }}/user-service:${{ env.IMAGE_TAG }}
+
+      - name: Deploy to DEV
+        run: |
+          kubectl apply -k k8s/overlays/dev
+          kubectl rollout status deployment/api-gateway -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/user-service -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+
+      - name: Smoke test DEV deployment
+        run: |
+          # Wait for pods to be fully ready
+          sleep 10
+          # Port-forward and test health
+          kubectl port-forward svc/api-gateway 3000:3000 -n ${{ env.K8S_NAMESPACE }} &
+          sleep 5
+          curl --fail --retry 3 http://localhost:3000/health || exit 1
+          echo "✅ Smoke test passed"
+
+      - name: Notify on success
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "✅ *DEV Deploy Successful*\nService: devops-challenge\nSHA: `${{ github.sha }}`\nTriggered by: ${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "❌ *DEV Deploy FAILED*\nService: devops-challenge\nSHA: `${{ github.sha }}`\nTriggered by: ${{ github.actor }}\nSee: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB 4: Deploy to PROD on push to main (with manual approval gate)
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy → PROD
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production              # GitHub environment with required reviewers
+      url: https://devops-challenge.example.com
+    env:
+      DEPLOY_ENV: prod
+      K8S_NAMESPACE: devops-challenge-prod
+      IMAGE_TAG: sha-${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig (EKS)
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ secrets.EKS_CLUSTER_NAME_PROD }} \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Set up kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Fetch secrets from AWS Secrets Manager
+        run: |
+          # Pull secrets and write to secrets.env for kustomize secretGenerator
+          REDIS_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id devops-challenge/prod/redis-password \
+            --query SecretString --output text)
+          echo "redis-password=${REDIS_PASSWORD}" > k8s/overlays/prod/secrets.env
+
+      - name: Update image tags in prod overlay
+        working-directory: k8s/overlays/prod
+        run: |
+          kustomize edit set image \
+            ghcr.io/${{ env.IMAGE_OWNER }}/api-gateway=ghcr.io/${{ env.IMAGE_OWNER }}/api-gateway:${{ env.IMAGE_TAG }} \
+            ghcr.io/${{ env.IMAGE_OWNER }}/user-service=ghcr.io/${{ env.IMAGE_OWNER }}/user-service:${{ env.IMAGE_TAG }}
+          # Also update APP_VERSION with git SHA for traceability
+          kustomize edit add configmap app-config --from-literal=APP_VERSION=${{ env.IMAGE_TAG }}
+
+      - name: Deploy to PROD
+        run: |
+          kubectl apply -k k8s/overlays/prod
+          kubectl rollout status deployment/api-gateway -n ${{ env.K8S_NAMESPACE }} --timeout=600s
+          kubectl rollout status deployment/user-service -n ${{ env.K8S_NAMESPACE }} --timeout=600s
+
+      - name: Verify production health
+        run: |
+          kubectl port-forward svc/api-gateway 3000:3000 -n ${{ env.K8S_NAMESPACE }} &
+          sleep 5
+          curl --fail --retry 5 --retry-delay 3 http://localhost:3000/health || exit 1
+          curl --fail --retry 5 --retry-delay 3 http://localhost:3000/health/ready || exit 1
+          echo "✅ Production health checks passed"
+
+      - name: Clean up secrets file
+        if: always()
+        run: rm -f k8s/overlays/prod/secrets.env
+
+      - name: Notify on success
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "🚀 *PROD Deploy Successful*\nService: devops-challenge\nSHA: `${{ github.sha }}`\nTriggered by: ${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify on failure — auto rollback
+        if: failure()
+        run: |
+          echo "❌ Prod deploy failed — rolling back"
+          kubectl rollout undo deployment/api-gateway -n ${{ env.K8S_NAMESPACE }} || true
+          kubectl rollout undo deployment/user-service -n ${{ env.K8S_NAMESPACE }} || true
+
+      - name: Notify failure via Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "🔥 *PROD Deploy FAILED — Rollback initiated*\nService: devops-challenge\nSHA: `${{ github.sha }}`\nTriggered by: ${{ github.actor }}\nSee: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
