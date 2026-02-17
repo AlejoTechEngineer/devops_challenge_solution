@@ -40,8 +40,6 @@ curl -X POST http://localhost:3000/api/users \
 ### Kubernetes (Docker Desktop)
 
 ```bash
-# Create cluster
-
 # Ensure Kubernetes is enabled in Docker Desktop
 kubectl cluster-info
 
