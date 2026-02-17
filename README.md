@@ -127,6 +127,20 @@ The Kubernetes manifests follow a base + overlay structure using Kustomize to se
 
 ---
 
+---
+
+## Deployment Strategy
+
+**Why maxUnavailable: 0?**
+To guarantee zero-downtime rolling updates. New pods must pass readiness checks before older ones are terminated.
+
+**Why separate liveness and readiness probes?**
+Readiness protects traffic flow. Liveness protects process health. Restarting a pod will not fix an upstream dependency failure (e.g., Redis), so probe design must reflect that.
+
+---
+
+---
+
 ## What I Would Improve With More Time
 
 1. **GitOps with ArgoCD** — declarative deploys, automatic drift detection, easy rollbacks via Git revert
