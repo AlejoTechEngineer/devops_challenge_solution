@@ -1,6 +1,6 @@
 # DevOps Challenge — Solution
 This repository contains my solution for the VIP Medical DevOps Engineer Challenge.
-The goal was to treat the platform as production infrastructure — focusing on reliability, automation, security, and observability rather than just making the application “work”.
+The goal was to treat the platform as production infrastructure; focusing on reliability, automation, security, and observability rather than just making the application “work”.
 
 **Author:** Alejandro De Mendoza  
 **Branch:** main
