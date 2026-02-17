@@ -1,10 +1,12 @@
 # DevOps Challenge — Solution
-Production-ready microservices deployment with Kubernetes, CI/CD, observability, and security best practices.
-
+This repository contains my solution for the VIP Medical DevOps Challenge, focusing on real production practices (CI/CD, Kubernetes, monitoring and security).
 
 **Author:** Alejandro De Mendoza  
 **Branch:** main
+
 **Time spent:** ~8-10 hours  
+Most time was spent on Kubernetes hardening (NetworkPolicies + HPA) and troubleshooting the broken manifests.
+
 
 ---
 
