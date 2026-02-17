@@ -1,8 +1,8 @@
 # DevOps Challenge — Solution
 
-**Author:** [Your Name]  
+**Author:** Alejandro De Mendoza  
 **Branch:** `solution/your-name`  
-**Time spent:** ~9 hours  
+**Time spent:** ~5 hours  
 
 ---
 
