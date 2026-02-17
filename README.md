@@ -37,11 +37,10 @@ curl -X POST http://localhost:3000/api/users \
   -d '{"name":"John Doe","email":"john@example.com"}'
 ```
 
-### Kubernetes (kind cluster)
+### Kubernetes (Docker Desktop)
 
 ```bash
 # Create cluster
-Kubernetes (Docker Desktop / kind cluster)
 
 # Ensure Kubernetes is enabled in Docker Desktop
 kubectl cluster-info
@@ -49,8 +48,6 @@ kubectl cluster-info
 # Build and load images
 docker build -t devops-challenge/api-gateway:local ./apps/api-gateway
 docker build -t devops-challenge/user-service:local ./apps/user-service
-kind load docker-image devops-challenge/api-gateway:local --name devops-challenge
-kind load docker-image devops-challenge/user-service:local --name devops-challenge
 
 # Deploy dev overlay
 kubectl apply -k k8s/overlays/dev
