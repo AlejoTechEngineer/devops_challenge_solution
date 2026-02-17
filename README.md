@@ -1,18 +1,18 @@
 # DevOps Challenge — Solution
-This repository contains my solution for the VIP Medical DevOps Challenge, focusing on real production practices (CI/CD, Kubernetes, monitoring and security).
+This repository contains my solution for the VIP Medical DevOps Engineer Challenge.
+The goal was to treat the platform as production infrastructure — focusing on reliability, automation, security, and observability rather than just making the application “work”.
 
 **Author:** Alejandro De Mendoza  
 **Branch:** main
 
 **Time spent:** ~8-10 hours  
-Most time was spent on Kubernetes hardening (NetworkPolicies + HPA) and troubleshooting the broken manifests.
-
+Most of the time was spent hardening the Kubernetes layer (NetworkPolicies, HPA behavior, probes configuration) and carefully analyzing the broken deployment to document the root causes properly.
 
 ---
 
 ## Solution Summary
 
-This solution implements all 5 parts of the challenge plus several bonus items:
+This solution implements all five required parts of the challenge and includes several production-oriented improvements.
 
 | Part | Status | Notes |
 |------|--------|-------|
@@ -40,20 +40,23 @@ curl -X POST http://localhost:3000/api/users \
 ```
 
 ### Kubernetes (Docker Desktop)
+This assumes Kubernetes is enabled in Docker Desktop.
 
 ```bash
-# Ensure Kubernetes is enabled in Docker Desktop
+# Verify cluster access
 kubectl cluster-info
 
-# Build and load images
+# Build local images
 docker build -t devops-challenge/api-gateway:local ./apps/api-gateway
 docker build -t devops-challenge/user-service:local ./apps/user-service
 
-# Deploy dev overlay
+# Deploy development overlay
 kubectl apply -k k8s/overlays/dev
 
-# Test
+# Expose API Gateway locally
 kubectl port-forward svc/api-gateway 3000:3000 -n devops-challenge-dev
+
+# Test
 curl http://localhost:3000/health/ready
 ```
 
@@ -102,13 +105,17 @@ curl http://localhost:3000/health/ready
     ├── architecture.md            # Design decisions and trade-offs
     ├── monitoring-strategy.md     # Prometheus metrics, alerts, secrets management
     └── troubleshooting.md         # 12 bugs in broken/ analyzed and fixed
+
+The Kubernetes manifests follow a base + overlay structure using Kustomize to separate environment concerns cleanly (dev vs prod).
 ```
 
 ---
 
 ## Key Design Decisions
 
-**Why dumb-init?** Node.js is not designed to be PID 1. Without it, SIGTERM from Kubernetes is not forwarded to the Node process — in-flight requests are dropped on pod termination.
+**Why dumb-init?** Node.js running as PID 1 does not properly handle signal forwarding. Using dumb-init ensures graceful shutdowns during rolling deployments and avoids dropped in-flight requests.
+
+**Why non-root containers?** Running as a non-root user reduces blast radius in case of container compromise and aligns with security best practices.
 
 **Why `maxUnavailable: 0`?** Guarantees zero-downtime rolling deploys. New pods must pass readiness checks before old pods are terminated.
 
