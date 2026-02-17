@@ -1,6 +1,8 @@
 ---
-# HPA for API Gateway
-# Scales based on CPU and memory utilization
+# HPA del API Gateway
+# Escala por consumo de CPU y memoria.
+# La idea es que suba rápido cuando haya carga y baje con calma para no estar "saltando" todo el tiempo.
+
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -12,8 +14,10 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: api-gateway
+
   minReplicas: 2
   maxReplicas: 10
+
   metrics:
     - type: Resource
       resource:
@@ -21,29 +25,35 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
           averageUtilization: 80
+
   behavior:
-    # Scale up quickly when load increases
+    # Sube relativamente rápido cuando se dispara la carga
     scaleUp:
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
           value: 2
           periodSeconds: 60
-    # Scale down slowly to avoid thrashing
+
+    # Baja más lento para evitar "thrashing" (sube/baja constantemente)
     scaleDown:
       stabilizationWindowSeconds: 300
       policies:
         - type: Pods
           value: 1
           periodSeconds: 120
+
 ---
-# HPA for User Service
+# HPA del User Service
+# Misma lógica: CPU + memoria, con un escalado moderado.
+
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -55,8 +65,10 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: user-service
+
   minReplicas: 2
   maxReplicas: 8
+
   metrics:
     - type: Resource
       resource:
@@ -64,19 +76,27 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
           averageUtilization: 80
+
   behavior:
+    
+    # Escalado hacia arriba: sin locuras, pero responde rápido
+
     scaleUp:
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
           value: 2
           periodSeconds: 60
+
+    # Escalado hacia abajo: despacio para no cortar capacidad de golpe
+
     scaleDown:
       stabilizationWindowSeconds: 300
       policies:

@@ -1,16 +1,16 @@
-# Dependencies
+# Dependencias (no deben ir en la imagen)
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Test artifacts
+# Archivos de tests y coverage
 coverage/
 .nyc_output/
 *.test.js
 __tests__/
 
-# Development config
+# Configuración de desarrollo
 .env
 .env.*
 .eslintrc*
@@ -18,38 +18,38 @@ __tests__/
 nodemon.json
 jest.config.*
 
-# Git
+# Git (no tiene sentido dentro del contenedor)
 .git/
 .gitignore
 .gitattributes
 
-# CI/CD
+# Pipelines / CI
 .github/
 .gitlab-ci.yml
 Jenkinsfile
 
-# Documentation
+# Documentación
 docs/
 *.md
 README*
 CHANGELOG*
 
-# Build artifacts
+# Builds locales
 dist/
 build/
 *.log
 
-# OS artifacts
+# Archivos del sistema operativo
 .DS_Store
 Thumbs.db
 
-# IDE
+# Configuración del editor / IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Docker
+# Archivos relacionados con Docker (evitamos meter Dockerfiles innecesarios dentro de la imagen)
 Dockerfile*
 .dockerignore
 docker-compose*

@@ -6,7 +6,11 @@ const axios = require('axios');
 const client = require('prom-client');
 const { createLogger, format, transports } = require('winston');
 
-// ─── Structured Logger ────────────────────────────────────────────────────────
+/**
+ * Logger básico con winston.
+ * Lo dejo en formato JSON porque es más fácil de parsear cuando corre en contenedores o en la nube.
+ */
+
 const logger = createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: format.combine(
@@ -18,9 +22,14 @@ const logger = createLogger({
   transports: [new transports.Console()],
 });
 
-// ─── Prometheus Metrics ───────────────────────────────────────────────────────
+/**
+ * Configuración de métricas con Prometheus
+ */
+
 const register = new client.Registry();
 client.collectDefaultMetrics({ register });
+
+// Tiempo que tardan las peticiones HTTP que recibe este servicio
 
 const httpRequestDuration = new client.Histogram({
   name: 'http_request_duration_seconds',
@@ -30,12 +39,16 @@ const httpRequestDuration = new client.Histogram({
   registers: [register],
 });
 
+// Total de requests que llegan al gateway
+
 const httpRequestTotal = new client.Counter({
   name: 'http_requests_total',
   help: 'Total number of HTTP requests',
   labelNames: ['method', 'route', 'status_code'],
   registers: [register],
 });
+
+// Tiempo de llamadas hacia otros servicios (upstream)
 
 const upstreamRequestDuration = new client.Histogram({
   name: 'upstream_request_duration_seconds',
@@ -45,16 +58,25 @@ const upstreamRequestDuration = new client.Histogram({
   registers: [register],
 });
 
-// ─── App Config ───────────────────────────────────────────────────────────────
+/**
+ * Configuración principal
+ */
+
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const app = express();
 app.use(express.json());
+
+// Quito este header por seguridad básica
+
 app.disable('x-powered-by');
 
-// ─── Request Duration Middleware ──────────────────────────────────────────────
+/**
+ * Middleware para medir cuánto tarda cada request
+ */
+
 app.use((req, res, next) => {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
@@ -65,7 +87,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Request Logger Middleware ────────────────────────────────────────────────
+/**
+ * Middleware simple de logging de requests
+ */
+
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -81,13 +106,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Health Checks ────────────────────────────────────────────────────────────
-// Liveness: is the process alive? (if fails → restart container)
+/**
+ * Health checks
+ */
+
+// Liveness: solo verifica que el proceso está vivo
+
 app.get('/health/live', (req, res) => {
   res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
 
-// Readiness: can the service accept traffic? (if fails → remove from load balancer)
+// Readiness: verifica si el gateway puede responder correctamente. Aquí comprobamos que el user-service esté accesible
+
 app.get('/health/ready', async (req, res) => {
   try {
     const timer = upstreamRequestDuration.startTimer({ service: 'user-service', method: 'GET' });
@@ -95,17 +125,21 @@ app.get('/health/ready', async (req, res) => {
     timer({ status_code: 200 });
     res.status(200).json({ status: 'ready', dependencies: { user_service: 'up' }, timestamp: new Date().toISOString() });
   } catch (err) {
-    logger.warn('readiness check failed', { error: err.message });
+    logger.warn('falló el readiness check', { error: err.message });
     res.status(503).json({ status: 'not ready', dependencies: { user_service: 'down' }, timestamp: new Date().toISOString() });
   }
 });
 
-// Legacy health for backwards compat
+// Endpoint legacy para compatibilidad
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', service: 'api-gateway', env: NODE_ENV });
 });
 
-// ─── Prometheus Metrics Endpoint ──────────────────────────────────────────────
+/**
+ * Endpoint para que Prometheus recoja métricas
+ */
+
 app.get('/metrics', async (req, res) => {
   try {
     res.set('Content-Type', register.contentType);
@@ -115,7 +149,10 @@ app.get('/metrics', async (req, res) => {
   }
 });
 
-// ─── API Routes → User Service Proxy ─────────────────────────────────────────
+/**
+ * Proxy hacia user-service
+ */
+
 app.use('/api/users', async (req, res) => {
   const timer = upstreamRequestDuration.startTimer({ service: 'user-service', method: req.method });
   try {
@@ -135,7 +172,7 @@ app.use('/api/users', async (req, res) => {
   } catch (err) {
     const statusCode = err.response?.status || 502;
     timer({ status_code: statusCode });
-    logger.error('upstream request failed', {
+    logger.error('error llamando a user-service', {
       service: 'user-service',
       method: req.method,
       path: req.path,
@@ -144,41 +181,54 @@ app.use('/api/users', async (req, res) => {
     });
     res.status(statusCode).json({
       error: 'upstream_error',
-      message: statusCode === 502 ? 'User service unavailable' : err.response?.data?.message || 'Request failed',
+      message: statusCode === 502 ? 'User service no disponible' : err.response?.data?.message || 'Error procesando la petición',
     });
   }
 });
 
-// ─── 404 Handler ──────────────────────────────────────────────────────────────
+/**
+ * Manejo básico de 404
+ */
+
 app.use((req, res) => {
   res.status(404).json({ error: 'not_found', path: req.path });
 });
 
-// ─── Global Error Handler ─────────────────────────────────────────────────────
+/**
+ * Manejador global de errores
+ */
+
 app.use((err, req, res, next) => {
-  logger.error('unhandled error', { error: err.message, stack: err.stack });
+  logger.error('error no controlado', { error: err.message, stack: err.stack });
   res.status(500).json({ error: 'internal_server_error' });
 });
 
-// ─── Server + Graceful Shutdown ───────────────────────────────────────────────
+/**
+ * Arranque del servidor + apagado controlado
+ */
+
 const server = http.createServer(app);
 
 server.listen(PORT, () => {
-  logger.info('server started', { port: PORT, env: NODE_ENV, user_service_url: USER_SERVICE_URL });
+  logger.info('servidor iniciado', { port: PORT, env: NODE_ENV, user_service_url: USER_SERVICE_URL });
 });
 
 function shutdown(signal) {
-  logger.info('shutdown initiated', { signal });
+  logger.info('apagando servidor', { signal });
   server.close(() => {
-    logger.info('server closed gracefully');
+    logger.info('servidor cerrado correctamente');
     process.exit(0);
   });
-  // Force exit after 10s if connections don't close
+
+  // Si algo se queda colgado, forzamos salida después de 10s
+
   setTimeout(() => {
-    logger.error('forced shutdown after timeout');
+    logger.error('apagado forzado por timeout');
     process.exit(1);
   }, 10000);
 }
+
+// Señales del sistema
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -189,6 +239,10 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandled rejection', { reason: String(reason) });
 });
+
+/**
+ * Genera un ID simple para trazabilidad
+ */
 
 function generateRequestId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`;

@@ -1,5 +1,9 @@
 ---
-# PDB ensures at least 1 api-gateway pod is always available during node drain / rolling updates
+# PodDisruptionBudget para el API Gateway
+# Garantiza que al menos 1 pod siga disponible
+# durante un node drain o un rolling update.
+# Evita downtime accidental cuando Kubernetes mueve pods.
+
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -11,7 +15,10 @@ spec:
       app: api-gateway
 
 ---
-# PDB ensures at least 1 user-service pod is always available
+# PodDisruptionBudget para el User Service
+# Misma lógica: siempre mantener mínimo 1 pod activo.
+# Esto protege frente a mantenimientos o reinicios de nodos.
+
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

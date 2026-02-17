@@ -1,82 +1,130 @@
-version: '3.9'
+version: "3.9"
 
 services:
-  # ── Redis ──────────────────────────────────────────────────────────────────
+
+  # Redis (almacenamiento para usuarios)
+
   redis:
     image: redis:7-alpine
     container_name: devops-challenge-redis
-    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-devpassword}"
+
+    # Activamos AOF y protegemos con password (modo dev)
+
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass "${REDIS_PASSWORD:-devpassword}"
+
     ports:
       - "6379:6379"
+
     volumes:
       - redis-data:/data
+
+    # Healthcheck simple: ping a Redis
+
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-devpassword}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+
     restart: unless-stopped
     networks:
       - app-network
 
-  # ── User Service ───────────────────────────────────────────────────────────
+
+  # User Service (CRUD de usuarios)
+
   user-service:
     build:
       context: ./apps/user-service
       target: final
+
     container_name: devops-challenge-user-service
+
     environment:
       PORT: "3001"
       NODE_ENV: development
       LOG_LEVEL: debug
+
+      # Redis dentro del network de docker-compose
+
       REDIS_URL: "redis://:${REDIS_PASSWORD:-devpassword}@redis:6379"
       APP_VERSION: "local"
+
     ports:
       - "3001:3001"
+
+    # No arrancamos hasta que Redis esté sano
+
     depends_on:
       redis:
         condition: service_healthy
+
+    # Verificamos que el servicio responda
+
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/health/live"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 15s
+
     restart: unless-stopped
     networks:
       - app-network
 
-  # ── API Gateway ────────────────────────────────────────────────────────────
+  # API Gateway (punto de entrada)
+
   api-gateway:
     build:
       context: ./apps/api-gateway
       target: final
+
     container_name: devops-challenge-api-gateway
+
     environment:
       PORT: "3000"
       NODE_ENV: development
       LOG_LEVEL: debug
+
+      # Gateway apunta al user-service dentro del compose network
+
       USER_SERVICE_URL: "http://user-service:3001"
       APP_VERSION: "local"
+
     ports:
       - "3000:3000"
+
+    # No levantamos el gateway hasta que user-service esté listo
+
     depends_on:
       user-service:
         condition: service_healthy
+
+    # Healthcheck del gateway
+
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health/live"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 15s
+
     restart: unless-stopped
     networks:
       - app-network
 
+# Volumen persistente para Redis
+
 volumes:
   redis-data:
     driver: local
+
+
+# Red interna para que los servicios se comuniquen
 
 networks:
   app-network:

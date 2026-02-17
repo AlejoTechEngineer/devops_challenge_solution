@@ -1,52 +1,101 @@
-# ⚠️  BROKEN DEPLOYMENT — This file has intentional bugs. See docs/troubleshooting.md
+# DESPLIEGUE ROTO A PROPÓSITO
+# Este archivo está hecho con errores intencionales para practicar troubleshooting.
+# La idea es que al aplicarlo, Kubernetes empiece a fallar por todos lados y se pueda identificar los problemas con `kubectl describe`, logs y eventos.
+#
+# Los detalles completos están explicados en: docs/troubleshooting.md
+
 ---
 apiVersion: apps/v1
-kind: Deploymentt          # BUG 1: Typo in Kind — "Deploymentt" should be "Deployment"
+kind: Deploymentt          # BUG 1: typo intencional (debería ser Deployment)
 metadata:
   name: api-gateway
   namespace: production
+
 spec:
-  replicas: 0              # BUG 2: replicas: 0 — no pods will ever start
+  replicas: 0              # BUG 2: con 0 réplicas no se levantará ningún pod
+
   selector:
     matchLabels:
       app: api-gateway
+
   template:
     metadata:
       labels:
-        app: backend       # BUG 3: label mismatch — selector expects "api-gateway", pod has "backend"
+        app: backend       # BUG 3: label incorrecto, no coincide con el selector
+
     spec:
       containers:
         - name: api-gateway
-          image: api-gateway:latest  # BUG 4: no registry prefix — will fail to pull in most clusters
+
+          # BUG 4: imagen sin registry → Kubernetes intentará buscarla en Docker Hub
+
+          image: api-gateway:latest
+
           ports:
-            - containerPort: 8080   # BUG 5: wrong port — app listens on 3000, not 8080
+            
+            # BUG 5: puerto incorrecto (la app escucha en 3000)
+
+            - containerPort: 8080
+
           env:
+            
+            # BUG 6: nombre mal escrito del servicio upstream
+
             - name: USER_SERVICE_URL
-              value: "http://userservice:3001"  # BUG 6: wrong service name — should be "user-service"
+              value: "http://userservice:3001"
+
           resources:
             requests:
-              cpu: "4000m"          # BUG 7: resource requests too high — 4 CPU cores requested, likely unschedulable
+              
+              # BUG 7: requests absurdamente altos → pods quedarán en Pending
+
+              cpu: "4000m"
               memory: "8Gi"
+
             limits:
-              cpu: "100m"           # BUG 8: limit < request — CPU limit (100m) is lower than request (4000m), invalid
+              
+              # BUG 8: limit menor que request → configuración inválida
+
+              cpu: "100m"
               memory: "64Mi"
+
           livenessProbe:
             httpGet:
+              
+              # BUG 9: path y puerto incorrectos
+
               path: /healthz
-              port: 8080            # BUG 9: probe hits wrong port (8080) and wrong path (/healthz vs /health/live)
+              port: 8080
+
             initialDelaySeconds: 0
-            periodSeconds: 1        # BUG 10: probes fire every 1 second — too aggressive, will kill healthy pods under load
-            failureThreshold: 1     # BUG 11: failureThreshold: 1 — single failure causes restart, no tolerance for transient errors
+
+            # BUG 10: probes cada segundo → demasiado agresivo
+
+            periodSeconds: 1
+
+            # BUG 11: un fallo reinicia el contenedor inmediatamente
+
+            failureThreshold: 1
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: api-gateway
   namespace: production
+
 spec:
   selector:
-    app: gateway            # BUG 12: selector doesn't match pod label "api-gateway" — no endpoints will be registered
+    
+    # BUG 12: selector no coincide con los labels reales del pod
+
+    app: gateway
+
   ports:
     - port: 80
-      targetPort: 8080      # BUG 5 repeated: targets wrong container port
+      
+      # BUG 5 repetido: targetPort equivocado
+
+      targetPort: 8080
+
   type: LoadBalancer

@@ -5,71 +5,89 @@ metadata:
   labels:
     app: user-service
     tier: backend
+
 spec:
   replicas: 2
+
   selector:
     matchLabels:
       app: user-service
+
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0       # Zero-downtime deploys
+      maxUnavailable: 0   # Así evitamos downtime durante despliegues
+
   template:
     metadata:
       labels:
         app: user-service
         tier: backend
+
+      # Prometheus scrapea métricas directamente desde el pod
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3001"
         prometheus.io/path: "/metrics"
+
     spec:
-      # Graceful shutdown: let in-flight requests finish before SIGTERM is sent
+      # Damos tiempo a que termine requests en vuelo antes de apagar el pod
       terminationGracePeriodSeconds: 30
+
+      # Ejecutamos como usuario no-root por seguridad
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+
       containers:
         - name: user-service
           image: ghcr.io/vipmed-technology/user-service:latest
           imagePullPolicy: Always
+
           ports:
             - containerPort: 3001
               name: http
+
           env:
-            # Non-sensitive config from ConfigMap
+            # Configuración no sensible desde ConfigMap
             - name: PORT
               valueFrom:
                 configMapKeyRef:
                   name: app-config
                   key: USER_SERVICE_PORT
+
             - name: NODE_ENV
               valueFrom:
                 configMapKeyRef:
                   name: app-config
                   key: NODE_ENV
+
             - name: LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
                   name: app-config
                   key: LOG_LEVEL
+
             - name: APP_VERSION
               valueFrom:
                 configMapKeyRef:
                   name: app-config
                   key: APP_VERSION
-            # Sensitive config from Secret
+
+            # Password de Redis desde Secret
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
                   key: redis-password
-            # Build Redis URL using configmap host + secret password
+
+            # URL completa de Redis construida con la password
             - name: REDIS_URL
               value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+
           resources:
             requests:
               cpu: "100m"
@@ -77,8 +95,9 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
-          # Liveness: is the process alive and responsive?
-          # Failure → Kubernetes restarts the container
+
+          # Liveness probe: el proceso sigue vivo?
+          # Si falla → Kubernetes reinicia el contenedor
           livenessProbe:
             httpGet:
               path: /health/live
@@ -87,9 +106,9 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
-            successThreshold: 1
-          # Readiness: can the service accept traffic? (Redis connected?)
-          # Failure → removed from Service endpoints (no traffic sent)
+
+          # Readiness probe: puede recibir tráfico?
+          # Si Redis cae, deja de recibir requests pero no se reinicia
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -98,19 +117,22 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
-            successThreshold: 1
-          # Startup probe: gives time for first-time initialization
+
+          # Startup probe: le da margen al pod en el arranque inicial
           startupProbe:
             httpGet:
               path: /health/live
               port: 3001
             initialDelaySeconds: 5
             periodSeconds: 5
-            failureThreshold: 12   # 12 * 5s = 60s max startup time
+            failureThreshold: 12   # 12 * 5s = 60s máximo
+
+          # Hardening extra del contenedor
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
+
       restartPolicy: Always

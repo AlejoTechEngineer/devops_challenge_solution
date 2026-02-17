@@ -1,16 +1,22 @@
-# Monitoring & Observability Strategy
+# Estrategia de Monitorización y Observabilidad
 
-## Overview
+## Descripción general
 
-This document describes the observability stack for the VIP Medical Group DevOps Challenge. The strategy follows the **three pillars of observability**: metrics, logs, and traces.
+Este documento describe la estrategia de observabilidad del proyecto, cubriendo los tres pilares fundamentales:
+
+- Métricas
+- Logs
+- Trazas
+
+La implementación sigue buenas prácticas estándar de la industria y está diseñada para ser extensible a un entorno productivo real.
 
 ---
 
-## 1. Metrics — Prometheus + Grafana
+## 1. Métricas — Prometheus + Grafana
 
-### Deployment
+### Recolección de métricas
 
-Both services expose a `/metrics` endpoint in Prometheus text format via `prom-client`. Prometheus scrapes these endpoints every 15 seconds using pod annotations:
+Ambos servicios exponen un endpoint `/metrics` mediante `prom-client`. Prometheus realiza scraping cada 15 segundos usando anotaciones en los pods:
 
 ```yaml
 annotations:
@@ -19,37 +25,53 @@ annotations:
   prometheus.io/path: "/metrics"
 ```
 
-### Metrics Collected
+### Métricas por defecto de Node.js
 
-**Default Node.js metrics (via `prom-client` default collector):**
-- `process_cpu_seconds_total` — CPU usage
-- `process_resident_memory_bytes` — Memory usage
-- `nodejs_eventloop_lag_seconds` — Event loop lag (critical for detecting blocked I/O)
-- `nodejs_heap_size_used_bytes` — Heap usage
+El collector por defecto de `prom-client` expone automáticamente las siguientes métricas:
 
-**Custom application metrics:**
+| Métrica | Descripción |
+|---|---|
+| `process_cpu_seconds_total` | Uso de CPU |
+| `process_resident_memory_bytes` | Uso de memoria |
+| `nodejs_eventloop_lag_seconds` | Lag del event loop (clave para detectar bloqueos) |
+| `nodejs_heap_size_used_bytes` | Uso de heap |
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `http_requests_total` | Counter | method, route, status_code | Total HTTP requests |
-| `http_request_duration_seconds` | Histogram | method, route, status_code | Request latency |
-| `upstream_request_duration_seconds` | Histogram | service, method, status_code | Gateway → upstream latency |
-| `redis_operation_duration_seconds` | Histogram | operation, status | Redis command latency |
-| `users_total` | Gauge | — | Total users in system |
+### Métricas personalizadas de la aplicación
 
-### Grafana Dashboards
+| Métrica | Tipo | Labels | Descripción |
+|---|---|---|---|
+| `http_requests_total` | Counter | `method`, `route`, `status_code` | Total de requests HTTP |
+| `http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Latencia de requests HTTP |
+| `upstream_request_duration_seconds` | Histogram | `service`, `method`, `status_code` | Latencia gateway → servicio |
+| `redis_operation_duration_seconds` | Histogram | `operation`, `status` | Latencia de operaciones Redis |
+| `users_total` | Gauge | — | Total de usuarios registrados |
 
-Three dashboards are recommended:
+Estas métricas permiten aplicar el modelo **RED** (Rate, Errors, Duration) sobre los servicios.
 
-1. **Service Overview** — request rate, error rate, p50/p95/p99 latency (RED method)
-2. **Infrastructure** — CPU, memory, pod restarts, HPA scaling events
-3. **Business Metrics** — users created/deleted per hour, active users
+### Dashboards sugeridos en Grafana
+
+**Service Overview**
+- Requests por segundo
+- Tasa de errores (5xx)
+- Latencias p50 / p95 / p99
+
+**Infraestructura**
+- CPU y memoria por pod
+- Reinicios de pods
+- Eventos de HPA
+
+**Métricas de negocio**
+- Usuarios creados por hora
+- Usuarios eliminados
+- Total de usuarios activos
 
 ---
 
-## 2. Logging — Structured JSON with Winston
+## 2. Logging — JSON estructurado con Winston
 
-All services use `winston` with JSON format. Every log line includes:
+Los servicios utilizan `winston` con salida en formato JSON estructurado.
+
+### Ejemplo de log
 
 ```json
 {
@@ -66,42 +88,58 @@ All services use `winston` with JSON format. Every log line includes:
 }
 ```
 
-**Why structured JSON logs?**
-- Parseable by any log aggregation system without regex
-- Easily filtered/queried (e.g., `level=error AND service=user-service`)
-- `request_id` propagation enables request tracing across services
+### Razones para usar logs en JSON
 
-### Log Aggregation Stack
+- Son fáciles de parsear sin necesidad de expresiones regulares.
+- Permiten filtrado eficiente por cualquier campo.
+- Facilitan la correlación de requests mediante `request_id`.
+- Con el header `X-Request-ID` es posible rastrear una request desde el gateway hasta el `user-service`.
 
-In production (AWS EKS):
-- **Fluent Bit** (DaemonSet) → collects container logs from `/var/log/containers/`
-- **Amazon CloudWatch Logs** → centralized storage and querying
-- **CloudWatch Log Insights** → ad-hoc queries, anomaly detection
+### Stack de agregación de logs
 
-Alternative open-source stack:
-- **Fluent Bit** → **Loki** (log aggregation) → **Grafana** (visualization)
+**Entorno AWS EKS:**
 
----
+```
+Fluent Bit (DaemonSet) → CloudWatch Logs → CloudWatch Log Insights
+```
 
-## 3. Distributed Tracing — OpenTelemetry
+**Alternativa open-source:**
 
-*(Bonus implementation)*
-
-Instruments are added via `@opentelemetry/sdk-node` for end-to-end request tracing across the api-gateway → user-service chain.
-
-In production: traces are exported to **AWS X-Ray** or **Jaeger**.
-
-Each trace span captures:
-- HTTP method, path, status code
-- Upstream service calls with latency
-- Redis operations
-- Error stack traces
+```
+Fluent Bit → Loki → Grafana
+```
 
 ---
 
-## 4. Alerting Rules
+## 3. Trazas distribuidas — OpenTelemetry
 
-### Rule 1: High Error Rate
+Instrumentación disponible mediante `@opentelemetry/sdk-node` para trazabilidad completa de:
+
+- Flujo `api-gateway` → `user-service`
+- Llamadas HTTP entre servicios
+- Operaciones Redis
+- Propagación de errores
+
+### Backends de exportación compatibles
+
+- AWS X-Ray
+- Jaeger
+
+### Atributos por span
+
+| Atributo | Descripción |
+|---|---|
+| Método HTTP | Verbo de la request |
+| Path | Ruta invocada |
+| Status | Código de respuesta |
+| Latencia | Duración del span |
+| Errores | Detalle del error si aplica |
+
+---
+
+## 4. Reglas de alertas
+
+### 4.1 Alta tasa de errores (5xx)
 
 ```yaml
 alert: HighErrorRate
@@ -110,17 +148,11 @@ expr: |
   /
   rate(http_requests_total[5m]) > 0.05
 for: 2m
-labels:
-  severity: critical
-annotations:
-  summary: "High 5xx error rate on {{ $labels.service }}"
-  description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
-  runbook_url: "https://wiki.example.com/runbooks/high-error-rate"
 ```
 
-**Why:** A 5% error rate for 2 minutes signals a meaningful service degradation that requires immediate attention.
+Si más del 5% de las requests fallan durante 2 minutos consecutivos, se considera un incidente activo.
 
-### Rule 2: High P99 Latency
+### 4.2 Latencia P99 alta
 
 ```yaml
 alert: HighP99Latency
@@ -129,45 +161,35 @@ expr: |
     rate(http_request_duration_seconds_bucket[5m])
   ) > 2.0
 for: 5m
-labels:
-  severity: warning
-annotations:
-  summary: "P99 latency above 2s on {{ $labels.service }}"
-  description: "P99 latency is {{ $value }}s — users are experiencing slow responses"
 ```
 
-**Why:** P99 at 2s means 1% of users wait more than 2 seconds. At scale this is significant. We use P99 rather than average because averages mask tail latency.
+Se utiliza el percentil 99 en lugar del promedio para evitar que la cola de latencia quede oculta. Si el 1% de los usuarios experimenta más de 2 segundos de espera, se considera una degradación del servicio.
 
-### Rule 3: Pod Restart Loop
+### 4.3 Pods en reinicio continuo
 
 ```yaml
 alert: PodRestartLoop
 expr: |
   increase(kube_pod_container_status_restarts_total[15m]) > 3
 for: 5m
-labels:
-  severity: critical
-annotations:
-  summary: "Pod {{ $labels.pod }} is restarting frequently"
-  description: "Container {{ $labels.container }} has restarted {{ $value }} times in 15 minutes. Likely OOMKill or crash loop."
 ```
 
-**Why:** More than 3 restarts in 15 minutes indicates a crash loop (OOMKill, config error, or unhandled exception).
+Más de 3 reinicios en 15 minutos suele indicar alguna de las siguientes causas:
+- OOMKill por límites de memoria insuficientes
+- Crash loop por error en la aplicación
+- Error de configuración o variables de entorno incorrectas
 
-### Rule 4: Redis Down
+### 4.4 Redis no disponible
 
 ```yaml
 alert: RedisDown
 expr: up{job="redis"} == 0
 for: 1m
-labels:
-  severity: critical
-annotations:
-  summary: "Redis is unreachable"
-  description: "User service will start returning 503 — all user operations depend on Redis"
 ```
 
-### Rule 5: HPA at Max Replicas
+Si Redis cae, el `user-service` comenzará a devolver respuestas `503`. Esta alerta es de prioridad crítica.
+
+### 4.5 HPA en máximo de réplicas
 
 ```yaml
 alert: HPAMaxReplicasReached
@@ -176,56 +198,71 @@ expr: |
   ==
   kube_horizontalpodautoscaler_spec_max_replicas
 for: 10m
-labels:
-  severity: warning
-annotations:
-  summary: "HPA {{ $labels.horizontalpodautoscaler }} has reached max replicas"
-  description: "Cannot scale further — investigate traffic spike or resource bottleneck"
 ```
+
+Si el HPA permanece en el máximo durante un periodo prolongado, puede indicar:
+- Pico de tráfico sostenido
+- Recursos mal dimensionados
+- Cuello de botella en un servicio dependiente
 
 ---
 
-## 5. Secrets Management Strategy
+## 5. Gestión de secretos
 
-### Problem
+### Problema
 
-Kubernetes Secrets are base64-encoded (not encrypted) and are stored in etcd. If etcd is compromised or secrets are accidentally committed to Git, credentials are exposed.
+Los Kubernetes Secrets están codificados en base64, no cifrados. Si etcd o el repositorio se ven comprometidos, las credenciales quedan expuestas.
 
-### Production Solution: External Secrets Operator + AWS Secrets Manager
+### Solución recomendada — External Secrets Operator + AWS Secrets Manager
+
+Flujo de sincronización:
 
 ```
 AWS Secrets Manager
-      ↓  (IAM Role for Service Account — IRSA)
-External Secrets Operator (k8s controller)
-      ↓  (syncs every 1h or on-demand)
-Kubernetes Secret (in-cluster, never in Git)
-      ↓
-Pod (mounted as env var or volume)
+        |
+External Secrets Operator
+        |
+Kubernetes Secret
+        |
+       Pod
 ```
 
-**Steps:**
-1. Store secrets in AWS Secrets Manager (`devops-challenge/prod/redis-password`)
-2. Install External Secrets Operator in cluster
-3. Create `ExternalSecret` manifest (this IS committed to Git — it's just a reference, not the value)
-4. ESO fetches the actual value from ASM and creates the Kubernetes Secret automatically
-5. Secrets rotate automatically when ASM value changes
+**Pasos de implementación:**
 
-**For GitOps (ArgoCD/Flux):**
-- Use **Sealed Secrets** (Bitnami) — encrypt secrets with a cluster-specific key so they can safely be committed to Git
-- Only the cluster's private key can decrypt them
+1. Almacenar los secretos en AWS Secrets Manager.
+2. Crear un recurso `ExternalSecret` en Kubernetes.
+3. El operador sincroniza el valor real de forma automática.
+4. Los secretos rotan sin necesidad de modificar el código ni los manifiestos.
 
-### What We NEVER Do
-- Hardcode secrets in Dockerfiles, app code, or manifests
-- Commit `.env` files with real values
-- Use `imagePullPolicy: Always` with `latest` tag (unpredictable)
-- Store secrets as ConfigMap values
+### Prácticas que deben evitarse
+
+- Hardcodear secretos en el código fuente o en Dockerfiles.
+- Incluir archivos `.env` reales en el repositorio.
+- Usar la etiqueta `latest` en imágenes de producción.
+- Almacenar secretos en ConfigMaps.
 
 ---
 
-## 6. Cost Optimization Notes
+## 6. Optimización de costos
 
-- Use **KEDA** (Kubernetes Event-Driven Autoscaling) for scale-to-zero during off-hours
-- Set appropriate resource `requests` (affects scheduling) and `limits` (affects throttling)
-- Use **Spot Instances** for non-critical workloads via node taints/tolerations
-- Implement **CloudWatch Container Insights** for per-service cost attribution
-- Review HPA metrics weekly to right-size `minReplicas`
+Consideraciones aplicables si el sistema pasa a un entorno productivo:
+
+- Usar **KEDA** para escalar a cero en horarios de baja carga.
+- Ajustar correctamente los valores de `requests` y `limits` por pod.
+- Utilizar instancias **Spot** para cargas de trabajo no críticas.
+- Revisar las métricas del HPA de forma periódica.
+- Implementar herramientas de cost attribution por servicio.
+
+---
+
+## Conclusión
+
+La estrategia de observabilidad cubre los aspectos esenciales de un sistema en producción:
+
+- Métricas con visibilidad sobre el modelo RED.
+- Logs estructurados con correlación de requests.
+- Trazas distribuidas mediante OpenTelemetry.
+- Alertas enfocadas en síntomas de problemas reales.
+- Gestión segura de secretos con rotación automática.
+
+Es una base sólida y extensible, lista para crecer en complejidad según las necesidades del entorno.

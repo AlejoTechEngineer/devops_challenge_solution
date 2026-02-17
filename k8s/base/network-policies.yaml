@@ -1,23 +1,32 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Network Policies — Zero Trust: deny all by default, allow only what's needed
-# Traffic flow: Internet → api-gateway → user-service → redis
-# ─────────────────────────────────────────────────────────────────────────────
+# Network Policies
+# Enfoque simple de Zero Trust:
+# 1. Primero negamos todo
+# 2. Luego abrimos únicamente lo necesario
+#
+# Flujo esperado:
+# Internet → api-gateway → user-service → redis
 
 ---
-# Default deny-all for the namespace — explicit allow-lists below
+# Política base: deny all
+# A partir de aquí nada entra ni sale si no está explícitamente permitido
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-all
 spec:
-  podSelector: {}            # Applies to ALL pods in namespace
+  podSelector: {}   # Aplica a TODOS los pods del namespace
   policyTypes:
     - Ingress
     - Egress
 
 ---
-# Allow API Gateway to receive external traffic (from ingress / port-forward)
-# and to call User Service
+
+# Permisos para el API Gateway
+# - Recibe tráfico externo (ingress/port-forward)
+# - Puede llamar al user-service
+# - Necesita resolver DNS
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -29,18 +38,24 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+
   ingress:
     - ports:
-        - port: 3000        # Accept HTTP traffic on the gateway port
+        - port: 3000   # Puerto donde escucha el gateway
+
   egress:
-    # Allow calls to user-service
+    
+    # Permitir llamadas al user-service
+
     - to:
         - podSelector:
             matchLabels:
               app: user-service
       ports:
         - port: 3001
-    # Allow DNS resolution (CoreDNS)
+
+    # Permitir resolución DNS (CoreDNS)
+
     - to: []
       ports:
         - port: 53
@@ -49,8 +64,11 @@ spec:
           protocol: TCP
 
 ---
-# Allow User Service to receive traffic from API Gateway only
-# and to connect to Redis
+# Permisos para el User Service
+# - Solo acepta tráfico desde el API Gateway
+# - Puede conectarse a Redis
+# - Necesita DNS
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -62,6 +80,7 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+
   ingress:
     - from:
         - podSelector:
@@ -69,15 +88,19 @@ spec:
               app: api-gateway
       ports:
         - port: 3001
+
   egress:
-    # Allow calls to Redis
+    # Permitir conexión a Redis
+
     - to:
         - podSelector:
             matchLabels:
               app: redis
       ports:
         - port: 6379
-    # Allow DNS resolution
+
+    # Permitir DNS
+
     - to: []
       ports:
         - port: 53
@@ -86,7 +109,10 @@ spec:
           protocol: TCP
 
 ---
-# Allow Redis to receive traffic from User Service only
+# Permisos para Redis
+# Solo acepta tráfico desde user-service
+# No necesita iniciar conexiones hacia fuera
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -98,6 +124,7 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+
   ingress:
     - from:
         - podSelector:
@@ -105,19 +132,22 @@ spec:
               app: user-service
       ports:
         - port: 6379
-  egress: []                  # Redis doesn't need to initiate connections
+
+  egress: []   # Redis no hace llamadas salientes
 
 ---
-# Allow Prometheus scraper to reach /metrics on both services
+# Permitir que Prometheus scrapee métricas. Solo desde el namespace de monitoring o desde pods etiquetados como prometheus
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-prometheus-scraping
 spec:
   podSelector:
-    matchLabels: {}            # Matches all pods that have /metrics
+    matchLabels: {}   # Aplica a cualquier pod que exponga /metrics
   policyTypes:
     - Ingress
+
   ingress:
     - from:
         - namespaceSelector:

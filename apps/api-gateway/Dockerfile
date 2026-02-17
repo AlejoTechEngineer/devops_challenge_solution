@@ -1,72 +1,82 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 1: deps — install ALL dependencies (including devDeps for building)
-# ─────────────────────────────────────────────────────────────────────────────
+# Etapa 1: instalar dependencias completas (incluye dev)
+
 FROM node:20-alpine AS deps
 
-# Install dumb-init for proper PID 1 signal handling
+# Instalamos dumb-init para que el contenedor maneje correctamente señales como SIGTERM
+
 RUN apk add --no-cache dumb-init
 
 WORKDIR /app
 
-# Copy only package files first → better layer caching
+# Copiamos primero los package*.json para aprovechar cache
+
 COPY package.json package-lock.json ./
 
-# Install all deps (including dev) with clean cache
-RUN npm ci --ignore-scripts && npm cache clean --force
+# Instalamos todas las dependencias (incluye devDependencies)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 2: test — run linting and tests (build-time quality gate)
-# ─────────────────────────────────────────────────────────────────────────────
+RUN npm ci --ignore-scripts \
+    && npm cache clean --force
+
+# Etapa 2: correr tests en tiempo de build. Si algo falla aquí, la imagen no se construye
+
 FROM deps AS test
 
 COPY src/ ./src/
 
 RUN npm test
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 3: production-deps — install ONLY production dependencies
-# ─────────────────────────────────────────────────────────────────────────────
+# Etapa 3: solo dependencias de producción
+
 FROM node:20-alpine AS production-deps
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# Instalamos únicamente dependencias necesarias para prod
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 4: final — minimal production image
-# ─────────────────────────────────────────────────────────────────────────────
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force
+
+# Etapa final: imagen mínima lista para producción
+
 FROM node:20-alpine AS final
 
-# Security hardening
+# Instalamos dumb-init y creamos usuario no root
+
 RUN apk add --no-cache dumb-init \
-    && addgroup -g 1001 -S appgroup \
-    && adduser -u 1001 -S appuser -G appgroup
+    && addgroup -S appgroup -g 1001 \
+    && adduser -S appuser -u 1001 -G appgroup
 
 WORKDIR /app
 
-# Copy dumb-init and production deps from previous stages
+# Copiamos solo lo necesario desde etapas anteriores
+
 COPY --from=production-deps --chown=appuser:appgroup /app/node_modules ./node_modules
 COPY --chown=appuser:appgroup package.json ./
 COPY --chown=appuser:appgroup src/ ./src/
 
-# Switch to non-root user
+# Cambiamos a usuario sin privilegios (mejor práctica)
+
 USER appuser
 
-# Metadata labels (OCI standard)
+# Metadata básica de la imagen
+
 LABEL org.opencontainers.image.title="api-gateway" \
-      org.opencontainers.image.description="API Gateway service - routes requests to upstream microservices" \
+      org.opencontainers.image.description="Servicio API Gateway que enruta peticiones a otros microservicios" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.source="https://github.com/vipmed-technology/devops-challenge"
 
-# Expose port (documentation only — actual binding via config)
+# Puerto expuesto (solo informativo)
+
 EXPOSE 3000
 
-# Health check using the /health/live endpoint
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:3000/health/live || exit 1
+# Healthcheck sencillo usando el endpoint de liveness
 
-# Use dumb-init as PID 1 to properly handle SIGTERM → graceful shutdown
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:3000/health/live || exit 1
+
+# Usamos dumb-init como PID 1 para que el shutdown sea limpio
+
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "src/index.js"]

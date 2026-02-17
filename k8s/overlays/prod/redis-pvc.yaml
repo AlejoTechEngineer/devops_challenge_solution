@@ -4,10 +4,19 @@ metadata:
   name: redis-pvc
   labels:
     app: redis
+
 spec:
+  
+  # Redis necesita almacenamiento persistente para no perder datos al reiniciar
+
   accessModes:
     - ReadWriteOnce
-  storageClassName: gp3         # AWS EBS gp3 — change to match your cloud provider
+
+  # StorageClass depende del proveedor cloud
+  # En AWS usamos gp3 (EBS), en otros entornos habría que ajustarlo
+  
+  storageClassName: gp3
+
   resources:
     requests:
-      storage: 10Gi
+      storage: 10Gi   # Tamaño suficiente para este caso de uso

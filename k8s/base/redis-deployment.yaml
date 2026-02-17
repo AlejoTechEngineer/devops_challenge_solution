@@ -6,12 +6,17 @@ metadata:
     app: redis
     tier: cache
 spec:
-  replicas: 1
+  replicas: 1   # Solo una instancia (para este entorno)
   selector:
     matchLabels:
       app: redis
+
+  # Usa Recreate porque Redis es stateful.
+  # Evita que dos instancias escriban al mismo tiempo.
+
   strategy:
-    type: Recreate            # Redis is stateful — avoid two pods running simultaneously
+    type: Recreate
+
   template:
     metadata:
       labels:
@@ -20,11 +25,15 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 999        # redis user in official image
+        runAsUser: 999   # Usuario redis en la imagen oficial
         fsGroup: 999
+
       containers:
         - name: redis
           image: redis:7-alpine
+
+          # Configuración básica del servidor Redis
+
           command:
             - redis-server
             - "--requirepass"
@@ -35,20 +44,28 @@ spec:
             - "$(REDIS_MAX_MEMORY)"
             - "--maxmemory-policy"
             - "allkeys-lru"
+
           ports:
             - containerPort: 6379
               name: redis
+
           env:
+            # Password viene desde Secret
+
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
                   key: redis-password
+
+            # Límite de memoria configurable vía ConfigMap
+
             - name: REDIS_MAX_MEMORY
               valueFrom:
                 configMapKeyRef:
                   name: app-config
                   key: REDIS_MAX_MEMORY
+
           resources:
             requests:
               cpu: "100m"
@@ -56,6 +73,9 @@ spec:
             limits:
               cpu: "250m"
               memory: "256Mi"
+
+          # Verifica que Redis responda a ping
+
           livenessProbe:
             exec:
               command:
@@ -66,6 +86,9 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+
+          # Readiness: solo recibe tráfico cuando responde correctamente
+
           readinessProbe:
             exec:
               command:
@@ -76,9 +99,14 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
+
           volumeMounts:
             - name: redis-data
               mountPath: /data
+
+      # En este entorno usamos emptyDir.
+      # En producción debería reemplazarse por un PVC.
+
       volumes:
         - name: redis-data
-          emptyDir: {}         # Overridden in prod with PersistentVolumeClaim
+          emptyDir: {}

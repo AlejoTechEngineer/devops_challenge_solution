@@ -1,12 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Namespace donde se despliega el entorno de desarrollo
+
 namespace: devops-challenge-dev
+
+# Partimos de la base común y encima aplicamos overrides específicos de dev
 
 bases:
   - ../../base
 
-# Dev-specific config overrides
+# Configuración propia de desarrollo
+# Aquí normalmente ponemos valores más verbosos y versiones locales
+
 configMapGenerator:
   - name: app-config
     behavior: merge
@@ -15,9 +21,16 @@ configMapGenerator:
       - LOG_LEVEL=debug
       - APP_VERSION=dev-local
 
-# Dev-specific patches: fewer replicas, lower limits, no prod-only restrictions
+# Parches específicos para dev:
+# - Menos réplicas
+# - Recursos más bajos
+# - Imágenes locales (kind)
+# - HPA limitado porque no hace falta escalar en local
+
 patches:
-  # Scale down for local development
+
+  # Bajamos réplicas para no consumir recursos de más en desarrollo
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -25,6 +38,7 @@ patches:
         name: api-gateway
       spec:
         replicas: 1
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -32,7 +46,9 @@ patches:
         name: user-service
       spec:
         replicas: 1
-  # Lower resource limits for dev
+
+  # Recursos reducidos para entorno local/dev
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -50,6 +66,7 @@ patches:
                   limits:
                     cpu: "200m"
                     memory: "128Mi"
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -67,7 +84,9 @@ patches:
                   limits:
                     cpu: "200m"
                     memory: "128Mi"
-  # Use local images for kind cluster
+
+  # En kind usamos imágenes locales, así que no hace falta pull desde registry
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -80,6 +99,7 @@ patches:
               - name: api-gateway
                 image: devops-challenge/api-gateway:local
                 imagePullPolicy: Never
+
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -92,7 +112,9 @@ patches:
               - name: user-service
                 image: devops-challenge/user-service:local
                 imagePullPolicy: Never
-  # Disable HPA in dev (single replica is fine)
+
+  # En dev no necesitamos autoscaling real, con 1 réplica suele bastar
+
   - patch: |-
       apiVersion: autoscaling/v2
       kind: HorizontalPodAutoscaler
@@ -101,6 +123,7 @@ patches:
       spec:
         minReplicas: 1
         maxReplicas: 2
+
   - patch: |-
       apiVersion: autoscaling/v2
       kind: HorizontalPodAutoscaler
@@ -110,7 +133,9 @@ patches:
         minReplicas: 1
         maxReplicas: 2
 
-# Use a dev-specific secret with a simple password
+# Secret sencillo para desarrollo
+# En producción esto vendría desde un secrets manager real
+
 secretGenerator:
   - name: app-secrets
     behavior: replace
