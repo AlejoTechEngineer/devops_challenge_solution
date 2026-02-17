@@ -14,13 +14,13 @@ This solution implements all 5 parts of the challenge plus several bonus items:
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Part 1: Containerization | ✅ Complete | Multi-stage, non-root, dumb-init, <200MB |
-| Part 2: Kubernetes | ✅ Complete | Kustomize, HPA, NetworkPolicies, PDB (bonus) |
-| Part 3: CI/CD | ✅ Complete | GitHub Actions, Trivy scanning (bonus), auto-rollback |
-| Part 4: Monitoring | ✅ Complete | Prometheus metrics, structured logging, 5 alert rules |
-| Part 5: Troubleshooting | ✅ Complete | 12 issues identified (8+ required) |
-| Bonus: Security scanning | ✅ Trivy in CI/CD | SARIF upload to GitHub Security tab |
-| Bonus: Pod Disruption Budgets | ✅ Complete | api-gateway and user-service PDBs |
+| Part 1: Containerization | Complete | Multi-stage, non-root, dumb-init, <200MB |
+| Part 2: Kubernetes | Complete | Kustomize, HPA, NetworkPolicies, PDB (bonus) |
+| Part 3: CI/CD | Complete | GitHub Actions, Trivy scanning (bonus), auto-rollback |
+| Part 4: Monitoring | Complete | Prometheus metrics, structured logging, 5 alert rules |
+| Part 5: Troubleshooting | Complete | 12 issues identified (8+ required) |
+| Bonus: Security scanning | Trivy in CI/CD | SARIF upload to GitHub Security tab |
+| Bonus: Pod Disruption Budgets | Complete | api-gateway and user-service PDBs |
 
 ---
 
