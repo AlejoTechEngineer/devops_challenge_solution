@@ -117,21 +117,15 @@ The Kubernetes manifests follow a base + overlay structure using Kustomize to se
 
 **Why non-root containers?** Running as a non-root user reduces blast radius in case of container compromise and aligns with security best practices.
 
-**Why `maxUnavailable: 0`?** Guarantees zero-downtime rolling deploys. New pods must pass readiness checks before old pods are terminated.
-
-**Why separate liveness and readiness probes?** If Redis goes down, readiness fails (stop sending traffic) but liveness stays healthy (don't restart). Restarting the app won't fix a Redis outage.
-
 **Why GitHub Container Registry?** Free, integrated with GitHub Actions via `GITHUB_TOKEN` (no extra secrets needed), and supports OCI image manifests with SBOM/provenance.
 
 **Image tagging strategy:** `sha-<7chars>` for immutable deploy references + branch name tags for human-readable latest. Never deploying `latest` to production.
 
 ---
 
----
-
 ## Deployment Strategy
 
-**Why maxUnavailable: 0?**
+**Why `maxUnavailable: 0`?**
 To guarantee zero-downtime rolling updates. New pods must pass readiness checks before older ones are terminated.
 
 **Why separate liveness and readiness probes?**
@@ -139,22 +133,40 @@ Readiness protects traffic flow. Liveness protects process health. Restarting a 
 
 ---
 
+## Scaling
+
+**Why HPA based on CPU and memory?**
+Using both signals prevents scale decisions based on a single dimension. For a real production environment, I would also consider request-based scaling (via custom metrics or KEDA).
+
+---
+
+# Image Registry & Tagging Strategy
+
+**Why GitHub Container Registry?**
+It integrates natively with GitHub Actions and avoids storing long-lived credentials.
+
+**Tagging approach:**
+Images are tagged using immutable SHA-based tags. I avoid deploying latest to production to guarantee traceability and reproducibility.
+
 ---
 
 ## What I Would Improve With More Time
 
-1. **GitOps with ArgoCD** — declarative deploys, automatic drift detection, easy rollbacks via Git revert
-2. **Redis HA** — Redis Sentinel or Cluster to eliminate the SPOF
-3. **Integration tests in CI** — spin up a `kind` cluster and run full API tests before any merge
-4. **Istio service mesh** — replace NetworkPolicies with mTLS for encrypted service-to-service communication
-5. **KEDA** — scale to zero during off-hours for cost savings
+- Implement GitOps with ArgoCD for declarative, drift-detected deployments
+- Add Redis HA (Sentinel or managed service) to remove single point of failure
+- Add integration tests running inside a temporary kind cluster in CI
+- Introduce Helm packaging for easier distribution
+- Implement KEDA or request-based autoscaling
+- Add distributed tracing (OpenTelemetry)
 
 ---
 
 ## Assumptions Made
 
-- The application runs in AWS EKS (Secrets Manager integration, EBS gp3 storage class)
-- Slack webhook URL is available for deploy notifications
-- HPA requires metrics-server to be installed and configured properly.
-- CNI plugin supports NetworkPolicies (Calico/Cilium — not Flannel)
-- Production Redis password is stored in AWS Secrets Manager at `devops-challenge/prod/redis-password`
+- Target environment is AWS EKS
+- Secrets would be injected from AWS Secrets Manager (not stored in plain YAML)
+- Metrics-server is installed and properly configured
+- The cluster uses a CNI that supports NetworkPolicies
+- Redis password is retrieved securely in production (e.g., via External Secrets Operator)
+
+In a real environment, I would avoid embedding any sensitive configuration in Kubernetes manifests and rely entirely on external secret management systems.
