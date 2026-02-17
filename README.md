@@ -1,8 +1,10 @@
 # DevOps Challenge — Solution
+Production-ready microservices deployment with Kubernetes, CI/CD, observability, and security best practices.
+
 
 **Author:** Alejandro De Mendoza  
-**Branch:** `solution/your-name`  
-**Time spent:** ~5 hours  
+**Branch:** main
+**Time spent:** ~8-10 hours  
 
 ---
 
@@ -39,7 +41,10 @@ curl -X POST http://localhost:3000/api/users \
 
 ```bash
 # Create cluster
-kind create cluster --name devops-challenge
+### Kubernetes (Docker Desktop / kind cluster)
+
+# Ensure Kubernetes is enabled in Docker Desktop
+kubectl cluster-info
 
 # Build and load images
 docker build -t devops-challenge/api-gateway:local ./apps/api-gateway
@@ -132,6 +137,6 @@ curl http://localhost:3000/health/ready
 
 - The application runs in AWS EKS (Secrets Manager integration, EBS gp3 storage class)
 - Slack webhook URL is available for deploy notifications
-- The cluster has a metrics-server installed (required for HPA)
+- HPA requires metrics-server to be installed and configured properly.
 - CNI plugin supports NetworkPolicies (Calico/Cilium — not Flannel)
 - Production Redis password is stored in AWS Secrets Manager at `devops-challenge/prod/redis-password`
