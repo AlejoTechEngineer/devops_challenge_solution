@@ -227,6 +227,7 @@ app.use('/api/users', async (req, res) => {
 
 /**
  * Manejo básico de 404
+ *                                                                                                                8. Aca se implementa un manejo básico de rutas no encontradas (404), que devuelve un mensaje de error claro en formato JSON. Esto es importante para mejorar la experiencia del cliente al interactuar con el API, ya que proporciona una respuesta consistente y fácil de entender cuando se accede a rutas que no existen en el servicio. Además, al incluir el path solicitado en la respuesta, se facilita el debugging tanto para los desarrolladores como para los clientes que consumen la API.
  */
 
 app.use((req, res) => {
@@ -235,6 +236,7 @@ app.use((req, res) => {
 
 /**
  * Global error handler con contexto (Aunque no use next, debe estar ahí para que Express lo registre como error handler.)
+ *                                                                                                                9. Aca se implementa un manejador global de errores, que captura cualquier error no manejado que ocurra durante el procesamiento de las peticiones. Este middleware registra un log de error con el mensaje y stack trace del error, y devuelve una respuesta JSON con un mensaje genérico de error interno. Esto es fundamental para asegurar que el servicio pueda manejar situaciones inesperadas de manera controlada, proporcionando información útil en los logs para debugging sin exponer detalles sensibles al cliente.
  */
 app.use((err, req, res, next) => {        
   req.logger?.error('unhandled error', {
@@ -250,6 +252,11 @@ app.use((err, req, res, next) => {
 
 /**
  * Arranque del servidor + apagado controlado
+ *                                                                                                                10. Aca en function shutdown se implementa graceful shutdown, que es una práctica esencial para asegurar que el servicio pueda cerrarse de manera controlada cuando recibe señales de terminación (como SIGTERM o SIGINT). Al cerrar el servidor de forma ordenada, se permite que las conexiones existentes se completen antes de que el proceso se termine, lo que mejora la experiencia del usuario y reduce la probabilidad de errores o pérdida de datos. Además, al incluir un timeout para forzar el cierre si algo se queda colgado, se asegura que el proceso no quede en un estado indeterminado por mucho tiempo.
+ *                                                                                                                    Adicionalmente en server.close se frenan la aceptacion a nuevas conexiones HTTP, con SIGTERM o SIGINT, se espera a que las conexiones actuales terminen, se loguea el apagado y se sale del proceso. Si algo se queda colgado, se fuerza el apagado después de 10 segundos para evitar que el proceso quede en un estado indeterminado.
+ *                                                                                                                    Ahora con process.exit(0) sale correctamente, y con process.exit(1) sale con error, lo que es útil para detectar en Kubernetes que el contenedor no se cerró correctamente.
+ *                                                                                                                    Ahora si algo se cuelga con setTimeout se fuerza el apagado después de 10 segundos, lo que es útil para evitar que el proceso quede en un estado (zombie) indeterminado por mucho tiempo.
+ *                                                                                                                    De esta manera se cumple con Graceful shutdown, stop accepting new connections, finish processing in-flight requests, close connections to downstream services (Axios no mantiene conexiones persistentes manualmente, así que no hay mucho que cerrar, aplica mas para pools y kafka) y exit cleanly.
  */
 
 const server = http.createServer(app);
@@ -273,8 +280,10 @@ function shutdown(signal) {
   }, 10000);
 }
 
-// Señales del sistema
-
+/**
+* Señales del sistema
+*                                                                                                                 11. Aca se implementa el manejo de señales del sistema para permitir un apagado controlado del servicio. Al escuchar las señales SIGTERM y SIGINT, se llama a la función shutdown, que maneja el proceso de cierre ordenado del servidor. Además, se manejan los eventos uncaughtException y unhandledRejection para registrar cualquier error no manejado que ocurra en el proceso, lo que es crucial para mantener la estabilidad del servicio y facilitar el debugging en caso de errores inesperados.
+*/
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
