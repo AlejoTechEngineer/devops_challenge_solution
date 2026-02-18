@@ -5,14 +5,16 @@ metadata:
   labels:
     app: redis
     tier: cache
+
 spec:
   replicas: 1   # Solo una instancia (para este entorno)
+
   selector:
     matchLabels:
       app: redis
 
-  # Usa Recreate porque Redis es stateful.
-  # Evita que dos instancias escriban al mismo tiempo.
+  # Redis es stateful.
+  # Se usa estrategia Recreate para evitar múltiples instancias escribiendo al mismo tiempo.
 
   strategy:
     type: Recreate
@@ -22,6 +24,7 @@ spec:
       labels:
         app: redis
         tier: cache
+
     spec:
       securityContext:
         runAsNonRoot: true
@@ -32,7 +35,9 @@ spec:
         - name: redis
           image: redis:7-alpine
 
-          # Configuración básica del servidor Redis
+          # FIX BUG 8:
+          # El password ya NO está en ConfigMap.
+          # Se obtiene desde Kubernetes Secret (app-secrets).
 
           command:
             - redis-server
@@ -50,15 +55,16 @@ spec:
               name: redis
 
           env:
-            # Password viene desde Secret
+            
+            # Password viene desde Secret (dato sensible)
 
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: redis-password
+                  key: REDIS_PASSWORD   # Debe coincidir exactamente con el Secret
 
-            # Límite de memoria configurable vía ConfigMap
+            # Límite de memoria configurable vía ConfigMap (no sensible)
 
             - name: REDIS_MAX_MEMORY
               valueFrom:
@@ -74,7 +80,7 @@ spec:
               cpu: "250m"
               memory: "256Mi"
 
-          # Verifica que Redis responda a ping
+          # Liveness probe: verifica que Redis responda correctamente
 
           livenessProbe:
             exec:
@@ -87,7 +93,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
 
-          # Readiness: solo recibe tráfico cuando responde correctamente
+          # Readiness probe: solo recibe tráfico cuando responde correctamente
 
           readinessProbe:
             exec:
@@ -105,7 +111,7 @@ spec:
               mountPath: /data
 
       # En este entorno usamos emptyDir.
-      # En producción debería reemplazarse por un PVC.
+      # En producción debería reemplazarse por un PersistentVolumeClaim (PVC).
 
       volumes:
         - name: redis-data

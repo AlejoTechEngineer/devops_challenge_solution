@@ -8,7 +8,8 @@ metadata:
 spec:
   replicas: 2
   selector:
-    matchLabels:
+    matchLabels:                                                                                              # 1. Aquí se define el selector de etiquetas para el Deployment, que es crucial para que Kubernetes pueda asociar los Pods creados por este Deployment con el Deployment mismo. En este caso, se seleccionan los Pods que tengan la etiqueta "app: api-gateway". Esto asegura que el Deployment controle y gestione correctamente los Pods que forman parte del API Gateway, permitiendo así la escalabilidad, actualizaciones y mantenimiento de los Pods de manera eficiente.
+                                                                                                              #    En este caso hace referencia al BUG 1: Label doesn't match selector pero en este caso es un bug que ha sido resuelto, ya que el selector ahora coincide con las etiquetas definidas en los Pods (app: api-gateway), lo que permite que el Deployment gestione correctamente los Pods asociados al API Gateway.
       app: api-gateway
   strategy:
     type: RollingUpdate
@@ -35,7 +36,8 @@ spec:
         - name: api-gateway
           image: ghcr.io/vipmed-technology/api-gateway:latest
           imagePullPolicy: Always
-          ports:
+          ports:                                                                                               # 2. Aquí se define el puerto que expondrá el contenedor del API Gateway, que es esencial para que el servicio pueda recibir tráfico HTTP. En este caso, se expone el puerto 3000, que es el puerto en el que la aplicación del API Gateway está configurada para escuchar las solicitudes entrantes. Esto permite que otros servicios dentro del clúster de Kubernetes o incluso clientes externos puedan comunicarse con el API Gateway a través de este puerto, facilitando así la integración y la comunicación entre los diferentes componentes de la aplicación.
+                                                                                                               #    En este caso se hace referencia al BUG 2: Wrong port (app runs on 3000) pero en este caso es un bug que ha sido resuelto, ya que ahora el puerto expuesto en el contenedor coincide con el puerto en el que la aplicación del API Gateway está configurada para escuchar (3000), lo que permite una comunicación correcta con otros servicios y clientes.
             - containerPort: 3000
               name: http
           env:
@@ -64,7 +66,8 @@ spec:
                 configMapKeyRef:
                   name: app-config
                   key: APP_VERSION
-          resources:
+          resources:                                                                                               # 3. Aquí se definen los recursos solicitados y los límites para el contenedor del API Gateway, lo que es fundamental para garantizar que el servicio tenga los recursos necesarios para funcionar correctamente sin afectar negativamente a otros servicios en el clúster. En este caso, se solicitan 100 millicores de CPU y 128 MiB de memoria, lo que proporciona una cantidad mínima de recursos para que el API Gateway pueda manejar las solicitudes entrantes. Además, se establecen límites de 500 millicores de CPU y 256 MiB de memoria, lo que evita que el contenedor consuma recursos excesivos que podrían afectar a otros servicios en el clúster. Esto es crucial para mantener la estabilidad y el rendimiento del clúster en general.
+                                                                                                                   #    En este caso se hace referencia al # BUG 3: Memory limit too low for Node.js pero en este caso es un bug que ha sido resuelto, ya que ahora se han definido tanto los recursos solicitados como los límites para el contenedor del API Gateway, lo que garantiza un uso adecuado de los recursos y mejora la estabilidad del servicio. 
             requests:
               cpu: "100m"
               memory: "128Mi"

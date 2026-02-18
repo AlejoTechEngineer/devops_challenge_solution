@@ -2,20 +2,27 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: app-config
-  labels:
-    app: devops-challenge
+  namespace: devops-challenge
 data:
-  # Service ports
-  API_GATEWAY_PORT: "3000"
-  USER_SERVICE_PORT: "3001"
+  
+  # Configuración NO sensible de la aplicación
+  # FIX BUG 8:
+  # Antes, contraseñas y credenciales estaban dentro del ConfigMap, lo cual es inseguro porque los ConfigMaps no están diseñados para almacenar información sensible.
+  # Las credenciales fueron movidas a un Secret (secrets.yaml).
+  
+  PORT_GATEWAY: "3000"
+  PORT_USER_SERVICE: "3001"
 
-  # Service discovery URLs (internal cluster DNS)
+  # URL interna de descubrimiento de servicios (seguro mantener aquí)
+  
   USER_SERVICE_URL: "http://user-service:3001"
 
-  # Application config
-  NODE_ENV: "production"
-  LOG_LEVEL: "info"
-  APP_VERSION: "1.0.0"
+  # Redis: host y puerto NO son datos sensibles
 
-  # Redis config (non-sensitive)
-  REDIS_MAX_MEMORY: "128mb"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # Configuración general de la aplicación
+
+  LOG_LEVEL: "info"
+  NODE_ENV: "production"
