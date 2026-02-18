@@ -142,3 +142,6 @@ secretGenerator:
     literals:
       - redis-password=devpassword123
     type: Opaque
+
+resources:
+  - namespace.yaml

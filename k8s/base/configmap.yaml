@@ -9,12 +9,15 @@ data:
   # FIX BUG 8:
   # Antes, contraseñas y credenciales estaban dentro del ConfigMap, lo cual es inseguro porque los ConfigMaps no están diseñados para almacenar información sensible.
   # Las credenciales fueron movidas a un Secret (secrets.yaml).
+  # De igual manera tener presente que en redis-deployment.yaml se hace referencia tambien a este BUG 8, ya que el password de Redis ahora se obtiene desde el Secret (app-secrets) en lugar de ConfigMap, lo que mejora la seguridad al manejar datos sensibles de manera adecuada.
+  # Fix BUG 9: 
+  # Credentials in plain text ConfigMap, en este caso se removieron REDIS_PASSWORD y DATABASE_URL del ConfigMap y ahora se gestionan mediante Kubernetes Secret (secret.yaml).
   
   PORT_GATEWAY: "3000"
   PORT_USER_SERVICE: "3001"
 
   # URL interna de descubrimiento de servicios (seguro mantener aquí)
-  
+
   USER_SERVICE_URL: "http://user-service:3001"
 
   # Redis: host y puerto NO son datos sensibles

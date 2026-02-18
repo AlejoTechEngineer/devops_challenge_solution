@@ -96,4 +96,6 @@ secretGenerator:
 
 # Recursos adicionales propios de prod
 resources:
+  - namespace.yaml
   - redis-pvc.yaml
+
