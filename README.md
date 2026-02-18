@@ -6,7 +6,7 @@ The goal was to treat the platform as real production infrastructure — not jus
 
 **Author:** Alejandro De Mendoza
 **Branch:** main
-**Time spent:** ~8-10 hours
+**Time spent:** ~7-10 hours
 
 Most of the time went into hardening the Kubernetes layer (NetworkPolicies, HPA behavior, health probe configuration, initContainers) and carefully analyzing the broken deployment to document the root causes — not just the symptoms.
 
