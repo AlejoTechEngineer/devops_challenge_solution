@@ -19,6 +19,7 @@ data:
   # URL interna de descubrimiento de servicios (seguro mantener aquí)
 
   USER_SERVICE_URL: "http://user-service:3001"
+  USER_SERVICE_PORT: "3001"
 
   # Redis: host y puerto NO son datos sensibles
 

@@ -1,0 +1,54 @@
+# Dependencies
+
+node_modules/
+
+# Build output
+
+dist/
+build/
+
+# Environment files
+
+.env
+.env.local
+.env.*.local
+
+# IDE / Editor
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Logs
+
+*.log
+npm-debug.log*
+
+# Test coverage
+
+coverage/
+.nyc_output/
+
+# Temporary files
+
+tmp/
+temp/
+
+# Kubernetes local secrets
+
+*-secret.yaml
+secrets/
+k8s/overlays/prod/secrets.env
+
+# Terraform (por si algún día lo agregas)
+
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
