@@ -141,6 +141,7 @@ secretGenerator:
     behavior: replace
     literals:
       - redis-password=devpassword123
+      - REDIS_PASSWORD=devpassword123
     type: Opaque
 
 resources:
