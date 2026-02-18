@@ -9,6 +9,8 @@ const { createLogger, format, transports } = require('winston');
 /**
  * Logger básico con winston.
  * Lo dejo en formato JSON porque es más fácil de parsear cuando corre en contenedores o en la nube.
+ *                                                                                                                1. Aca se implementa el structured JSON logging (level: config + winston automáticomente agrega timestamp y stack trace en caso de errores). 
+ *                                                                                                                   Se cumple con LOGS en fomrato JSON, Timestamp automatico, level automatico y messsage automatico. Esto es fundamental para poder analizar los logs de forma eficiente, especialmente cuando el servicio corre en contenedores o en la nube, donde los logs suelen ser consumidos por sistemas de monitoreo centralizados. Al tener un formato estructurado, es mucho más fácil filtrar, buscar y correlacionar eventos en los logs, lo que mejora significativamente la capacidad de debugging y monitoreo del servicio.
  */
 
 const logger = createLogger({
@@ -24,6 +26,9 @@ const logger = createLogger({
 
 /**
  * Configuración de métricas con Prometheus
+ * Aca se definen las métricas que vamos a exponer para Prometheus, incluyendo:                                   6.1. Aca se implementa la configuración de métricas con Prometheus, definiendo métricas clave para monitorear el rendimiento y la salud del servicio. Esto incluye métricas para medir la duración de las peticiones HTTP que recibe el gateway, el total de requests que llegan al gateway, y el tiempo de llamadas hacia otros servicios (upstream). Estas métricas son fundamentales para tener visibilidad sobre el comportamiento del servicio en producción y para detectar posibles problemas de rendimiento o disponibilidad.
+ *                                                                                                                     Se crea un registro de metricas, se activan las metricas por defecto de Node.js lo que cumple con prom-client library to expose default and custom metrics
+ *                                                                                                                     Se definen las metricas custom con cada uno de los const y eso cumple con expose default and custom metrics
  */
 
 const register = new client.Registry();
@@ -69,6 +74,35 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const app = express();
 app.use(express.json());
 
+/**
+ * Middleware global: genera o reutiliza un Request ID
+ * Esto permite trazabilidad end-to-end en microservicios
+ *                                                                                                              2.1 Aca se hace la implementacion del request context con un logger contextual por request. Esto es clave para poder seguir la trazabilidad de una petición a través de los logs, especialmente cuando el servicio interactúa con otros servicios (como en este caso con user-service). Al generar o reutilizar un Request ID y agregarlo al logger, podemos correlacionar fácilmente los logs relacionados con la misma petición, incluso si involucran múltiples servicios. Esto es fundamental para debugging y monitoreo en entornos de microservicios.
+ */
+app.use((req, res, next) => {
+  req.requestId = req.headers['x-request-id'] || generateRequestId();                                       
+
+  // devolvemos el ID al cliente también
+  res.setHeader('X-Request-ID', req.requestId);
+
+  next();
+});
+
+/**
+ * Middleware: logger contextual por request
+ * Todos los logs desde aquí incluyen request_id, method y path
+ *                                                                                                              2.2 Aca se implementa el logger contextual por request, que es una extensión del punto anterior. Al crear un logger hijo (child) para cada request, podemos incluir automáticamente información contextual relevante (como el request_id, método HTTP y ruta) en todos los logs generados durante el procesamiento de esa petición. Esto mejora significativamente la capacidad de análisis y debugging, ya que cada log relacionado con una petición específica tendrá esta información clave sin necesidad de agregarla manualmente en cada llamada al logger.   
+ */
+app.use((req, res, next) => {
+  req.logger = logger.child({
+    request_id: req.requestId,
+    method: req.method,
+    path: req.path,
+  });
+
+  next();
+});
+
 // Quito este header por seguridad básica
 
 app.disable('x-powered-by');
@@ -88,26 +122,29 @@ app.use((req, res, next) => {
 });
 
 /**
- * Middleware simple de logging de requests
+ * Middleware: logging estructurado completo
+ *                                                                                                              2.3 Aca se implementa el logging estructurado completo, que es una extensión de los puntos anteriores. Al escuchar el evento 'finish' de la respuesta, podemos registrar un log detallado cuando la petición se completa, incluyendo información como el status code, duración de la petición, user agent y dirección IP del cliente. Esto proporciona una visión completa de cada petición en los logs, lo que es invaluable para monitoreo, análisis y debugging. Además, al usar un formato JSON estructurado, estos logs son fácilmente parseables por herramientas de análisis de logs o sistemas de monitoreo centralizados.
+ *                                                                                                              3. y 4. En esta parte de igual manera se implementa el Add request logging middleware que trae method, path, status code, response time in ms
+ *                                                                                                                 Captura el tiempo inicial de la request, escucha el evento finish de la respuesta, registra method, path, status code y duración en milisegundos y utiliza un logger contextual (logger.child) para incluir automáticamente metadata del request
  */
 
 app.use((req, res, next) => {
   const start = Date.now();
+                                                                                                                
   res.on('finish', () => {
-    logger.info('request completed', {
-      method: req.method,
-      path: req.path,
-      status: res.statusCode,
+    req.logger.info('request completed', {
+      status_code: res.statusCode,
       duration_ms: Date.now() - start,
       user_agent: req.get('user-agent'),
       remote_addr: req.ip,
     });
   });
+
   next();
 });
 
 /**
- * Health checks
+ * Health checks                                                                                                5. Aca se implementan todos los health checks necesarios para Kubernetes, incluyendo liveness y readiness. El liveness check es simple y solo verifica que el proceso esté vivo, mientras que el readiness check es más completo e incluye una verificación de que el user-service esté accesible. Esto es fundamental para asegurar que Kubernetes pueda gestionar correctamente el ciclo de vida del contenedor, reiniciándolo si se detecta que no está vivo o evitando enviar tráfico a un contenedor que no está listo para manejarlo.
  */
 
 // Liveness: solo verifica que el proceso está vivo
@@ -138,6 +175,7 @@ app.get('/health', (req, res) => {
 
 /**
  * Endpoint para que Prometheus recoja métricas
+ *                                                                                                                6.2 Aca se establece el content-type correcto, devuelve todas las metricas registradas; default metrics, httpRequestDuration, httpRequestTotal y upstreamRequestDuration. Esto es esencial para que Prometheus pueda scrapear las métricas correctamente y tener visibilidad sobre el rendimiento y la salud del servicio a través de las métricas expuestas. Al incluir tanto las métricas por defecto como las personalizadas, se obtiene una visión completa del comportamiento del servicio en producción.
  */
 
 app.get('/metrics', async (req, res) => {
@@ -151,6 +189,7 @@ app.get('/metrics', async (req, res) => {
 
 /**
  * Proxy hacia user-service
+ *                                                                                                                7. Aca se implementa el proxy hacia User-Service, que es el servicio principal al que este API Gateway va a enrutar. Este endpoint captura todas las rutas bajo /api/users y las redirige al user-service, propagando el método HTTP, la ruta, el cuerpo de la petición y los headers relevantes (como el request ID para trazabilidad). Además, se mide el tiempo que tarda la llamada al user-service usando la métrica upstreamRequestDuration, lo que permite monitorear el rendimiento de las llamadas a este servicio externo. En caso de error, se maneja adecuadamente registrando un log con el error y devolviendo una respuesta con un mensaje claro para el cliente.
  */
 
 app.use('/api/users', async (req, res) => {
@@ -162,7 +201,9 @@ app.use('/api/users', async (req, res) => {
       data: req.body,
       headers: {
         'Content-Type': 'application/json',
-        'X-Request-ID': req.headers['x-request-id'] || generateRequestId(),
+
+        // Propago el mismo request ID para trazabilidad end-to-end, o genero uno nuevo si no viene
+        'X-Request-ID': req.requestId,
         'X-Forwarded-For': req.ip,
       },
       timeout: 10000,
@@ -172,10 +213,8 @@ app.use('/api/users', async (req, res) => {
   } catch (err) {
     const statusCode = err.response?.status || 502;
     timer({ status_code: statusCode });
-    logger.error('error llamando a user-service', {
-      service: 'user-service',
-      method: req.method,
-      path: req.path,
+    req.logger.error('error llamando a user-service', {
+      upstream_service: 'user-service',
       status: statusCode,
       error: err.message,
     });
@@ -195,12 +234,18 @@ app.use((req, res) => {
 });
 
 /**
- * Manejador global de errores
+ * Global error handler con contexto (Aunque no use next, debe estar ahí para que Express lo registre como error handler.)
  */
+app.use((err, req, res, next) => {        
+  req.logger?.error('unhandled error', {
+    error: err.message,
+    stack: err.stack,
+  });
 
-app.use((err, req, res, next) => {
-  logger.error('error no controlado', { error: err.message, stack: err.stack });
-  res.status(500).json({ error: 'internal_server_error' });
+  res.status(500).json({
+    error: 'internal_server_error',
+    request_id: req.requestId,
+  });
 });
 
 /**
