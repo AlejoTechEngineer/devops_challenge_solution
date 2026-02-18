@@ -16,13 +16,13 @@ Most of the time went into hardening the Kubernetes layer (NetworkPolicies, HPA 
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Part 1: Containerization | ✅ Complete | Multi-stage builds, non-root user, dumb-init, images <200MB |
-| Part 2: Kubernetes | ✅ Complete | Kustomize overlays, HPA, NetworkPolicies, PDB (bonus) |
-| Part 3: CI/CD | ✅ Complete | GitHub Actions, Trivy security scanning (bonus), auto-rollback |
-| Part 4: Monitoring | ✅ Complete | Prometheus metrics, structured JSON logging, 5 alerting rules |
-| Part 5: Troubleshooting | ✅ Complete | 8 issues identified and documented (8+ required) |
-| Bonus: Security scanning | ✅ Trivy in CI/CD | SARIF upload to GitHub Security tab |
-| Bonus: Pod Disruption Budgets | ✅ Complete | PDBs for api-gateway and user-service |
+| Part 1: Containerization | Complete | Multi-stage builds, non-root user, dumb-init, images <200MB |
+| Part 2: Kubernetes | Complete | Kustomize overlays, HPA, NetworkPolicies, PDB (bonus) |
+| Part 3: CI/CD | Complete | GitHub Actions, Trivy security scanning (bonus), auto-rollback |
+| Part 4: Monitoring | Complete | Prometheus metrics, structured JSON logging, 5 alerting rules |
+| Part 5: Troubleshooting | Complete | 8 issues identified and documented (8+ required) |
+| Bonus: Security scanning | Trivy in CI/CD | SARIF upload to GitHub Security tab |
+| Bonus: Pod Disruption Budgets | Complete | PDBs for api-gateway and user-service |
 
 ---
 

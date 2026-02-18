@@ -223,9 +223,9 @@ La trazabilidad básica está implementada mediante propagación de `X-Request-I
 Para trazas distribuidas completas, la implementación se haría con **OpenTelemetry**:
 
 ```
-api-gateway ──(OTLP)──▶ OTel Collector ──▶ AWS X-Ray / Jaeger
+api-gateway ──(OTLP)──> OTel Collector ──> AWS X-Ray / Jaeger
      │
-user-service ──(OTLP)──▶ OTel Collector
+user-service ──(OTLP)──> OTel Collector
 ```
 
 Cada span capturaría: método HTTP, ruta, status code, duración, `request_id` y propagación del `traceparent` header entre servicios. Esto permitiría ver en un solo trace el tiempo total de una request, desglosado por api-gateway, llamada al user-service y operación Redis.
