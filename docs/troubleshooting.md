@@ -1,88 +1,85 @@
-# Troubleshooting — Análisis del despliegue roto
+# Troubleshooting Report
 
-**Archivo analizado:** `k8s/broken/deployment.yaml`  
-**Problemas encontrados:** 12 (mínimo requerido: 8)
+**File analyzed:** `k8s/broken/deployment.yaml`  
+**Issues found:** 12 (minimum required: 8)
 
 ---
 
-## Proceso de debugging
+## Debugging Process
 
-Antes de empezar a corregir cosas a ciegas, lo primero fue seguir un flujo básico de troubleshooting en Kubernetes. La idea es ir de lo más general a lo más concreto: primero ver qué rechaza el clúster, luego qué pods están corriendo (o no), y finalmente entender por qué.
+Before fixing anything, the approach was to follow a structured flow from general to specific:
 
 ```bash
-# 1. Intentar aplicar el manifiesto y ver el error inicial
+# 1. Apply the manifest and observe the initial error
 kubectl apply -f k8s/broken/deployment.yaml
 
-# 2. Revisar qué recursos se llegaron a crear (si es que alguno)
+# 2. Check what resources were created (if any)
 kubectl get all -n production
 
-# 3. Si el Deployment no levanta pods:
+# 3. If the Deployment doesn't create pods:
 kubectl describe deployment api-gateway -n production
 
-# 4. Si los pods están Pending o en CrashLoopBackOff:
+# 4. If pods are Pending or in CrashLoopBackOff:
 kubectl describe pod <pod-name> -n production
 kubectl logs <pod-name> -n production --previous
 
-# 5. Ver si el Service realmente tiene endpoints
+# 5. Check if the Service actually has endpoints
 kubectl get endpoints api-gateway -n production
 
-# 6. Revisar eventos del clúster (suelen dar las pistas más claras)
+# 6. Review cluster events (usually the clearest diagnostic signal)
 kubectl get events -n production --sort-by='.lastTimestamp'
 ```
 
 ---
 
-## Problemas encontrados
+## Issues Found
 
-### Issue 1 — Typo en el campo `kind`
+### Issue 1
 
-El manifiesto tenía una `t` de más:
-
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** Typo in the `kind` field — `Deploymentt` (extra `t`).
+- **Why it causes a problem:** Kubernetes does not recognize `Deploymentt` as a valid resource type and rejects the entire manifest immediately with `no matches for kind "Deploymentt"`. Nothing gets created in the cluster.
+- **How to fix it:**
 ```yaml
-kind: Deploymentt   # ← una "t" extra
-```
+# Before
+kind: Deploymentt
 
-Kubernetes no reconoce ese tipo de recurso y rechaza el manifiesto completo con un error del tipo `no matches for kind "Deploymentt"`. No se crea absolutamente nada. Es el primer error que salta con `kubectl apply` o cualquier validador como `kubeval`.
-
-```yaml
-# Corrección
+# After
 kind: Deployment
 ```
 
 ---
 
-### Issue 2 — `replicas: 0`
+### Issue 2
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** `replicas: 0`
+- **Why it causes a problem:** A Deployment with zero replicas runs no pods. The service is completely down from the start. `kubectl get deploy` shows `READY 0/0` with no pods associated.
+- **How to fix it:**
 ```yaml
+# Before
 replicas: 0
-```
 
-Un deployment con cero réplicas no ejecuta ningún pod. El servicio queda completamente caído desde el primer momento. En producción esto significa downtime total. `kubectl get deploy` lo habría mostrado como `READY 0/0` sin ningún pod asociado.
-
-```yaml
-# Corrección
-replicas: 2   # mínimo razonable para alta disponibilidad
+# After
+replicas: 2   # minimum for high availability
 ```
 
 ---
 
-### Issue 3 — Labels del pod no coinciden con el selector
+### Issue 3
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** The pod template label `app: backend` does not match the selector `app: api-gateway`.
+- **Why it causes a problem:** Kubernetes requires the Deployment selector to exactly match the pod template labels. When they don't match, the manifest is rejected at apply time with a validation error.
+- **How to fix it:**
 ```yaml
-selector:
-  matchLabels:
-    app: api-gateway
-
+# Before
 template:
   metadata:
     labels:
-      app: backend   # ← no coincide con el selector
-```
+      app: backend
 
-Kubernetes exige que el selector del Deployment coincida exactamente con los labels del template. Al no hacerlo, el manifiesto se rechaza directamente en el momento de aplicarlo.
-
-```yaml
-# Corrección
+# After
 template:
   metadata:
     labels:
@@ -91,67 +88,69 @@ template:
 
 ---
 
-### Issue 4 — Imagen sin registry
+### Issue 4
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** Image specified without a registry: `image: api-gateway:latest`
+- **Why it causes a problem:** Without an explicit registry, Kubernetes tries to pull from Docker Hub. That image does not exist there, so the pod stays stuck in `ImagePullBackOff`. Additionally, using `latest` in production makes rollbacks unreliable since there is no way to know exactly which version is running.
+- **How to fix it:**
 ```yaml
+# Before
 image: api-gateway:latest
-```
 
-Sin un registry explícito, Kubernetes asume Docker Hub. Esa imagen no existe ahí, así que el pod se queda atascado en `ImagePullBackOff`. Además, usar `latest` en producción es una mala práctica: no hay forma de saber exactamente qué versión está corriendo ni de hacer rollback de forma fiable.
-
-```yaml
-# Corrección
+# After
 image: ghcr.io/vipmed-technology/api-gateway:sha-abc1234
 ```
 
 ---
 
-### Issue 5 — Puerto incorrecto (8080 vs 3000)
+### Issue 5
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** `containerPort: 8080` and `targetPort: 8080` — the application listens on port 3000.
+- **Why it causes a problem:** Health check probes and the Service try to connect on port 8080, but the application is not listening there. This causes a constant `Connection refused`, pods never pass readiness, and Kubernetes keeps restarting them indefinitely.
+- **How to fix it:**
 ```yaml
-containerPort: 8080   # la app escucha en 3000
+# Before
+containerPort: 8080
 targetPort: 8080
-```
 
-Las probes y el Service intentan conectarse al puerto 8080, pero la aplicación escucha en el 3000. El resultado es un `Connection refused` constante, pods que no pasan readiness y que Kubernetes reinicia una y otra vez.
-
-```yaml
-# Corrección
+# After
 containerPort: 3000
 targetPort: 3000
 ```
 
 ---
 
-### Issue 6 — Nombre incorrecto del servicio upstream
+### Issue 6
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** `USER_SERVICE_URL: "http://userservice:3001"` — missing hyphen in the service name.
+- **Why it causes a problem:** The actual Kubernetes Service is named `user-service`. Without the hyphen, Kubernetes DNS cannot resolve the name and returns `NXDOMAIN`. The api-gateway returns `502` on every call to the User Service. Detectable with `nslookup userservice` from inside the cluster.
+- **How to fix it:**
 ```yaml
+# Before
 value: "http://userservice:3001"
-```
 
-El servicio real se llama `user-service`, con guión. Ese typo hace que el DNS interno de Kubernetes no resuelva el nombre y el gateway devuelva un `502` en todas las llamadas al User Service.
-
-```yaml
-# Corrección
+# After
 value: "http://user-service:3001"
 ```
 
-Se detecta fácilmente haciendo `nslookup userservice` desde dentro del clúster: devuelve `NXDOMAIN`.
-
 ---
 
-### Issue 7 — Requests demasiado altos
+### Issue 7
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** Resource requests are absurdly high: `cpu: "4000m"` and `memory: "8Gi"`.
+- **Why it causes a problem:** The Kubernetes scheduler cannot find a node with 4 CPUs and 8GB of RAM available for a single pod. Pods stay in `Pending` state indefinitely and never start. `kubectl describe pod` shows `Insufficient cpu`.
+- **How to fix it:**
 ```yaml
+# Before
 requests:
   cpu: "4000m"
   memory: "8Gi"
-```
 
-Con esos valores, el scheduler de Kubernetes casi nunca va a encontrar un nodo con suficientes recursos disponibles. Los pods se quedan eternamente en estado `Pending` sin llegar a arrancar jamás. `kubectl describe pod` lo confirmaría con `Insufficient cpu`.
-
-```yaml
-# Corrección
+# After
 requests:
   cpu: "100m"
   memory: "128Mi"
@@ -159,19 +158,22 @@ requests:
 
 ---
 
-### Issue 8 — Limit menor que el request
+### Issue 8
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** Resource limit is lower than the request: `requests.cpu: "4000m"` vs `limits.cpu: "100m"`.
+- **Why it causes a problem:** Kubernetes does not allow limits to be lower than requests. This is an invalid configuration that causes the manifest to be rejected immediately at apply time.
+- **How to fix it:**
 ```yaml
+# Before
 requests:
   cpu: "4000m"
+  memory: "8Gi"
 limits:
   cpu: "100m"
-```
+  memory: "64Mi"
 
-Kubernetes no permite que el límite sea inferior al request. Es una configuración directamente inválida que hace que el manifiesto sea rechazado en el momento de aplicarlo.
-
-```yaml
-# Corrección
+# After
 requests:
   cpu: "100m"
   memory: "128Mi"
@@ -182,104 +184,109 @@ limits:
 
 ---
 
-### Issue 9 — Path incorrecto en la probe
+### Issue 9
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** Liveness probe uses `path: /healthz` and `port: 8080`.
+- **Why it causes a problem:** The application exposes `/health/live` on port 3000, not `/healthz` on 8080. The probe gets a `404` on every check and Kubernetes continuously restarts the pod even though the application itself is perfectly healthy. This creates a `CrashLoopBackOff` with no real application error.
+- **How to fix it:**
 ```yaml
-path: /healthz
-```
+# Before
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
 
-La aplicación expone `/health/live`, no `/healthz`. La probe recibe un `404` en cada comprobación y Kubernetes reinicia el pod de forma continua aunque esté completamente sano. Esto genera un `CrashLoopBackOff` que no tiene nada que ver con la aplicación en sí.
-
-```yaml
-# Corrección
-path: /health/live
-port: 3000
+# After
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 3000
 ```
 
 ---
 
-### Issue 10 — Probes demasiado agresivas (`periodSeconds: 1`)
+### Issue 10
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** `periodSeconds: 1` — health check probe fires every second.
+- **Why it causes a problem:** Probing every second generates unnecessary load, pollutes logs with probe requests, and adds noise to metrics. A standard production interval is 10-20 seconds, which is more than sufficient to detect real problems without the overhead.
+- **How to fix it:**
 ```yaml
+# Before
 periodSeconds: 1
-```
 
-Hacer un healthcheck cada segundo genera una cantidad innecesaria de requests, ensucia los logs y añade ruido a las métricas. En producción, un intervalo de 20 segundos con un timeout razonable es más que suficiente para detectar problemas reales sin penalizar el rendimiento.
-
-```yaml
-# Corrección
+# After
 periodSeconds: 20
 timeoutSeconds: 5
 ```
 
 ---
 
-### Issue 11 — `failureThreshold: 1`
+### Issue 11
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** `failureThreshold: 1`
+- **Why it causes a problem:** A single probe failure immediately triggers a container restart. Transient issues like a GC pause, a momentary CPU spike, or a slow network response cause unnecessary restarts and service degradation. The standard is to tolerate at least 3 consecutive failures before taking action.
+- **How to fix it:**
 ```yaml
+# Before
 failureThreshold: 1
-```
 
-Con este valor, un único fallo puntual (una pausa de GC, un pico de CPU momentáneo) ya provoca el reinicio del contenedor. En producción, lo habitual es tolerar al menos 3 fallos consecutivos antes de tomar cualquier acción. De lo contrario, se generan reinicios innecesarios que degradan el servicio sin que haya un problema real.
-
-```yaml
-# Corrección
+# After
 failureThreshold: 3
 ```
 
 ---
 
-### Issue 12 — Selector del Service no coincide con los labels
+### Issue 12
 
+- **File:** `k8s/broken/deployment.yaml`
+- **What is wrong:** The Service selector uses `app: gateway` but the pod labels are `app: api-gateway`.
+- **Why it causes a problem:** The Service cannot find any matching pods, so it has no endpoints. All traffic fails with a connection error. Detectable immediately with `kubectl get endpoints api-gateway -n production` which returns `<none>`.
+- **How to fix it:**
 ```yaml
-# En el Service
+# Before
 selector:
   app: gateway
 
-# En los pods
-app: api-gateway
-```
-
-El Service no encuentra ningún pod porque el selector no coincide. El resultado es que no hay endpoints registrados y todo el tráfico falla. Se detecta inmediatamente con `kubectl get endpoints`, que devuelve `<none>`.
-
-```yaml
-# Corrección
+# After
 selector:
   app: api-gateway
 ```
 
 ---
 
-## Tabla resumen
+## Summary Table
 
-| # | Problema | Impacto | Comando de detección |
-|---|---|---|---|
-| 1 | Typo en `kind` | Manifiesto rechazado | `kubectl apply` |
-| 2 | `replicas: 0` | Sin pods corriendo | `kubectl get deploy` |
-| 3 | Labels ≠ selector | Deployment inválido | `kubectl apply` |
-| 4 | Imagen sin registry | `ImagePullBackOff` | `kubectl describe pod` |
-| 5 | Puerto incorrecto | Probes fallan | `kubectl logs` |
-| 6 | Servicio mal nombrado | DNS falla, 502 | `nslookup` |
-| 7 | Requests excesivos | Pods en `Pending` | `kubectl describe pod` |
-| 8 | Limit < request | Configuración inválida | `kubectl apply` |
-| 9 | Path de probe incorrecto | `CrashLoopBackOff` | `kubectl describe pod` |
-| 10 | Probes cada 1s | Overhead innecesario | Logs + métricas |
-| 11 | Threshold demasiado bajo | Reinicios constantes | `kubectl get pods` |
-| 12 | Selector del Service incorrecto | Sin endpoints | `kubectl get endpoints` |
+| # | Issue | Impact | Detection Command |
+|---|-------|--------|-------------------|
+| 1 | Typo in `kind` field | Manifest rejected entirely | `kubectl apply` |
+| 2 | `replicas: 0` | No pods running, full downtime | `kubectl get deploy` |
+| 3 | Pod labels ≠ selector | Deployment invalid, rejected | `kubectl apply` |
+| 4 | Image without registry | `ImagePullBackOff` | `kubectl describe pod` |
+| 5 | Wrong container port (8080 vs 3000) | Probes fail, constant restarts | `kubectl logs` |
+| 6 | Upstream service name typo | DNS failure, 502 errors | `nslookup userservice` |
+| 7 | Requests too high (4000m CPU, 8Gi RAM) | Pods stuck in `Pending` | `kubectl describe pod` |
+| 8 | Limit lower than request | Invalid config, rejected | `kubectl apply` |
+| 9 | Wrong probe path (`/healthz`) | `CrashLoopBackOff` | `kubectl describe pod` |
+| 10 | `periodSeconds: 1` | Unnecessary overhead and log noise | Logs + metrics |
+| 11 | `failureThreshold: 1` | Constant unnecessary restarts | `kubectl get pods` |
+| 12 | Service selector mismatch | No endpoints, all traffic fails | `kubectl get endpoints` |
 
 ---
 
-## Herramientas utilizadas para el diagnóstico
+## Tools Used for Diagnosis
 
 ```bash
-# Validar sin aplicar cambios al clúster
+# Validate without applying changes to the cluster
 kubectl apply --dry-run=client -f k8s/broken/deployment.yaml
 
-# Análisis estático antes de aplicar
+# Static analysis before applying
 kubeval k8s/broken/deployment.yaml
 kube-linter lint k8s/broken/
 
-# Debug en runtime
+# Runtime debugging
 kubectl get events --sort-by='.lastTimestamp' -n production
 kubectl describe deployment api-gateway -n production
 kubectl describe pod <pod-name> -n production

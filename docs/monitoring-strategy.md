@@ -1,106 +1,80 @@
-# Estrategia de Monitorización y Observabilidad
+# Monitoring Strategy
 
-## Descripción general
+## Metrics
 
-Este documento describe la estrategia de observabilidad del proyecto, cubriendo los tres pilares fundamentales:
+### Application Metrics
 
-- Métricas
-- Logs
-- Trazas
+List the metrics collected from the applications:
 
-La implementación sigue buenas prácticas estándar de la industria y está diseñada para ser extensible a un entorno productivo real.
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `http_requests_total` | Counter | Total de requests HTTP recibidos. Labels: `method`, `route`, `status_code`. Permite calcular la tasa de errores (5xx) y el throughput por ruta. |
+| `http_request_duration_seconds` | Histogram | Latencia de cada request HTTP en segundos. Labels: `method`, `route`, `status_code`. Permite calcular p50, p95, p99. |
+| `upstream_request_duration_seconds` | Histogram | Latencia de las llamadas del api-gateway hacia el user-service. Labels: `service`, `method`, `status_code`. Útil para separar latencia propia del gateway vs latencia del upstream. |
+| `redis_operation_duration_seconds` | Histogram | Latencia de cada operación contra Redis (GET, SET, DEL, PING, SMEMBERS). Labels: `operation`, `status`. Ayuda a detectar degradación en Redis antes de que afecte a los usuarios. |
+| `users_total` | Gauge | Cantidad total de usuarios activos en el sistema. Se incrementa en cada POST y decrementa en cada DELETE. Métrica de negocio. |
 
----
+### Infrastructure Metrics
 
-## 1. Métricas — Prometheus + Grafana
-
-### Recolección de métricas
-
-Ambos servicios exponen un endpoint `/metrics` mediante `prom-client`. Prometheus realiza scraping cada 15 segundos usando anotaciones en los pods:
-
-```yaml
-annotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "3001"
-  prometheus.io/path: "/metrics"
-```
-
-### Métricas por defecto de Node.js
-
-El collector por defecto de `prom-client` expone automáticamente las siguientes métricas:
-
-| Métrica | Descripción |
-|---|---|
-| `process_cpu_seconds_total` | Uso de CPU |
-| `process_resident_memory_bytes` | Uso de memoria |
-| `nodejs_eventloop_lag_seconds` | Lag del event loop (clave para detectar bloqueos) |
-| `nodejs_heap_size_used_bytes` | Uso de heap |
-
-### Métricas personalizadas de la aplicación
-
-| Métrica | Tipo | Labels | Descripción |
-|---|---|---|---|
-| `http_requests_total` | Counter | `method`, `route`, `status_code` | Total de requests HTTP |
-| `http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Latencia de requests HTTP |
-| `upstream_request_duration_seconds` | Histogram | `service`, `method`, `status_code` | Latencia gateway → servicio |
-| `redis_operation_duration_seconds` | Histogram | `operation`, `status` | Latencia de operaciones Redis |
-| `users_total` | Gauge | — | Total de usuarios registrados |
-
-Estas métricas permiten aplicar el modelo **RED** (Rate, Errors, Duration) sobre los servicios.
-
-### Dashboards sugeridos en Grafana
-
-**Service Overview**
-- Requests por segundo
-- Tasa de errores (5xx)
-- Latencias p50 / p95 / p99
-
-**Infraestructura**
-- CPU y memoria por pod
-- Reinicios de pods
-- Eventos de HPA
-
-**Métricas de negocio**
-- Usuarios creados por hora
-- Usuarios eliminados
-- Total de usuarios activos
+| Metric Name | Source | Description |
+|-------------|--------|-------------|
+| `process_cpu_seconds_total` | prom-client default | Uso de CPU del proceso Node.js en modo usuario y kernel. |
+| `process_resident_memory_bytes` | prom-client default | Memoria RAM consumida por el proceso. |
+| `nodejs_eventloop_lag_seconds` | prom-client default | Lag del event loop. Si sube, indica que el hilo principal está bloqueado. |
+| `nodejs_heap_size_used_bytes` | prom-client default | Uso del heap de V8. Útil para detectar memory leaks. |
+| `kube_pod_container_status_restarts_total` | kube-state-metrics | Número de reinicios por contenedor. Permite alertar sobre crash loops. |
+| `kube_horizontalpodautoscaler_status_current_replicas` | kube-state-metrics | Réplicas actuales del HPA. Permite detectar cuando se alcanza el máximo de escalado. |
 
 ---
 
-## 2. Logging — JSON estructurado con Winston
+## Logging
 
-Los servicios utilizan `winston` con salida en formato JSON estructurado.
+### Log Format
 
-### Ejemplo de log
+Structured JSON con Winston en ambos servicios. Todos los logs incluyen `timestamp`, `level`, `service`, `version` y `message` como campos base. Los requests HTTP añaden campos adicionales de trazabilidad:
 
 ```json
 {
-  "timestamp": "2024-01-15T10:30:00.000Z",
+  "timestamp": "2026-02-18T06:51:32.848Z",
   "level": "info",
-  "service": "api-gateway",
-  "version": "1.0.0",
-  "message": "request completed",
-  "method": "GET",
-  "path": "/api/users",
-  "status": 200,
-  "duration_ms": 45,
-  "request_id": "abc123"
+  "service": "user-service",
+  "version": "dev-local",
+  "message": "request procesado",
+  "method": "POST",
+  "path": "/users",
+  "status": 201,
+  "duration_ms": 7,
+  "request_id": "lq9x8-5f3a9"
 }
 ```
 
-### Razones para usar logs en JSON
+El api-gateway genera un `X-Request-ID` por request y lo propaga al user-service vía header. Esto permite correlacionar todos los logs de una misma request end-to-end, incluso cuando atraviesa varios servicios.
 
-- Son fáciles de parsear sin necesidad de expresiones regulares.
-- Permiten filtrado eficiente por cualquier campo.
-- Facilitan la correlación de requests mediante `request_id`.
-- Con el header `X-Request-ID` es posible rastrear una request desde el gateway hasta el `user-service`.
+Los health checks de Kubernetes aparecen en los logs con `user_agent: "kube-probe/1.34"`, lo que permite filtrarlos en producción si generan demasiado ruido.
 
-### Stack de agregación de logs
+### Log Aggregation Strategy
 
-**Entorno AWS EKS:**
+**En AWS EKS (producción):**
 
 ```
-Fluent Bit (DaemonSet) → CloudWatch Logs → CloudWatch Log Insights
+Fluent Bit (DaemonSet en cada nodo)
+    │
+    ▼
+CloudWatch Logs (un log group por servicio)
+    │
+    ▼
+CloudWatch Log Insights (queries ad-hoc)
+    │
+    ▼
+CloudWatch Dashboards + Alarms
+```
+
+Fluent Bit corre como DaemonSet y recolecta stdout de todos los contenedores automáticamente. Al estar los logs en JSON, CloudWatch Log Insights puede queryarlos con sintaxis como:
+
+```
+fields @timestamp, service, level, message, duration_ms
+| filter level = "error"
+| sort @timestamp desc
 ```
 
 **Alternativa open-source:**
@@ -109,37 +83,13 @@ Fluent Bit (DaemonSet) → CloudWatch Logs → CloudWatch Log Insights
 Fluent Bit → Loki → Grafana
 ```
 
----
-
-## 3. Trazas distribuidas — OpenTelemetry
-
-Instrumentación disponible mediante `@opentelemetry/sdk-node` para trazabilidad completa de:
-
-- Flujo `api-gateway` → `user-service`
-- Llamadas HTTP entre servicios
-- Operaciones Redis
-- Propagación de errores
-
-### Backends de exportación compatibles
-
-- AWS X-Ray
-- Jaeger
-
-### Atributos por span
-
-| Atributo | Descripción |
-|---|---|
-| Método HTTP | Verbo de la request |
-| Path | Ruta invocada |
-| Status | Código de respuesta |
-| Latencia | Duración del span |
-| Errores | Detalle del error si aplica |
+Elegí JSON estructurado porque elimina la necesidad de regex en el ingestion pipeline, reduce errores de parsing y hace los logs directamente queryables por cualquier campo.
 
 ---
 
-## 4. Reglas de alertas
+## Alerting Rules
 
-### 4.1 Alta tasa de errores (5xx)
+### Alert 1: Alta tasa de errores 5xx
 
 ```yaml
 alert: HighErrorRate
@@ -148,11 +98,20 @@ expr: |
   /
   rate(http_requests_total[5m]) > 0.05
 for: 2m
+labels:
+  severity: critical
+annotations:
+  summary: "Tasa de errores 5xx > 5% en {{ $labels.service }}"
+  description: |
+    El {{ $value | humanizePercentage }} de las requests están fallando.
+    Threshold: 5%. Revisar logs del servicio y estado de dependencias.
 ```
 
-Si más del 5% de las requests fallan durante 2 minutos consecutivos, se considera un incidente activo.
+**Razonamiento:** El threshold del 5% balancea sensibilidad y ruido. `for: 2m` evita alertas por spikes momentáneos. Se alerta por síntoma (errores que ven los usuarios) y no por causa interna.
 
-### 4.2 Latencia P99 alta
+---
+
+### Alert 2: Latencia P99 alta
 
 ```yaml
 alert: HighP99Latency
@@ -161,108 +120,112 @@ expr: |
     rate(http_request_duration_seconds_bucket[5m])
   ) > 2.0
 for: 5m
+labels:
+  severity: warning
+annotations:
+  summary: "Latencia P99 > 2s en {{ $labels.service }}"
+  description: |
+    El 1% de los usuarios está experimentando > 2 segundos de espera.
+    P99 actual: {{ $value | humanizeDuration }}.
+    Revisar upstream_request_duration_seconds y redis_operation_duration_seconds.
 ```
 
-Se utiliza el percentil 99 en lugar del promedio para evitar que la cola de latencia quede oculta. Si el 1% de los usuarios experimenta más de 2 segundos de espera, se considera una degradación del servicio.
+**Razonamiento:** Se usa P99 en lugar del promedio porque el promedio oculta la tail latency. Si el promedio es 100ms pero el P99 es 3s, hay un problema real que el promedio no muestra.
 
-### 4.3 Pods en reinicio continuo
+---
 
-```yaml
-alert: PodRestartLoop
-expr: |
-  increase(kube_pod_container_status_restarts_total[15m]) > 3
-for: 5m
-```
-
-Más de 3 reinicios en 15 minutos suele indicar alguna de las siguientes causas:
-- OOMKill por límites de memoria insuficientes
-- Crash loop por error en la aplicación
-- Error de configuración o variables de entorno incorrectas
-
-### 4.4 Redis no disponible
+### Alert 3: Redis no disponible
 
 ```yaml
 alert: RedisDown
 expr: up{job="redis"} == 0
 for: 1m
+labels:
+  severity: critical
+annotations:
+  summary: "Redis no responde"
+  description: |
+    Redis lleva más de 1 minuto sin responder al scraping de Prometheus.
+    El user-service está devolviendo 503 en todos los requests de readiness.
+    Acción inmediata requerida.
 ```
 
-Si Redis cae, el `user-service` comenzará a devolver respuestas `503`. Esta alerta es de prioridad crítica.
+**Razonamiento:** Crítico porque sin Redis el user-service no puede atender requests. `for: 1m` da tiempo para distinguir un restart legítimo de una caída real.
 
-### 4.5 HPA en máximo de réplicas
+---
+
+### Alert 4: Pod en crash loop
 
 ```yaml
-alert: HPAMaxReplicasReached
+alert: PodRestartLoop
+expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+for: 5m
+labels:
+  severity: critical
+annotations:
+  summary: "Pod {{ $labels.pod }} reiniciando frecuentemente"
+  description: |
+    {{ $value }} reinicios en los últimos 15 minutos.
+    Causas posibles: OOMKill, error en la aplicación, config incorrecta.
+    Ejecutar: kubectl describe pod {{ $labels.pod }} -n {{ $labels.namespace }}
+```
+
+---
+
+### Alert 5: HPA en máximo de réplicas
+
+```yaml
+alert: HPAAtMaxReplicas
 expr: |
   kube_horizontalpodautoscaler_status_current_replicas
   ==
   kube_horizontalpodautoscaler_spec_max_replicas
 for: 10m
+labels:
+  severity: warning
+annotations:
+  summary: "HPA {{ $labels.horizontalpodautoscaler }} en máximo de réplicas"
+  description: |
+    El HPA lleva 10 minutos en el máximo configurado y no puede escalar más.
+    Posibles causas: pico de tráfico sostenido, límite mal dimensionado,
+    cuello de botella en un servicio dependiente (Redis).
+    Considerar aumentar maxReplicas o revisar la carga.
 ```
 
-Si el HPA permanece en el máximo durante un periodo prolongado, puede indicar:
-- Pico de tráfico sostenido
-- Recursos mal dimensionados
-- Cuello de botella en un servicio dependiente
+**Razonamiento:** Warning y no critical porque el servicio sigue funcionando, solo está al límite. Es una señal de capacidad, no de incidente activo.
 
 ---
 
-## 5. Gestión de secretos
+## Dashboards
 
-### Problema
+Si se conecta Grafana a Prometheus, los paneles recomendados son:
 
-Los Kubernetes Secrets están codificados en base64, no cifrados. Si etcd o el repositorio se ven comprometidos, las credenciales quedan expuestas.
+1. **Request Rate (RPS)**: `rate(http_requests_total[1m])` agrupado por servicio. Muestra el throughput actual y permite detectar caídas abruptas de tráfico.
 
-### Solución recomendada — External Secrets Operator + AWS Secrets Manager
+2. **Error Rate (%)**: `rate(http_requests_total{status_code=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100`. Panel con threshold en rojo al cruzar el 5%.
 
-Flujo de sincronización:
+3. **Latencia P50 / P95 / P99**: `histogram_quantile(0.50|0.95|0.99, rate(http_request_duration_seconds_bucket[5m]))`. Tres líneas en el mismo panel para visualizar la distribución de latencia.
 
-```
-AWS Secrets Manager
-        |
-External Secrets Operator
-        |
-Kubernetes Secret
-        |
-       Pod
-```
+4. **Redis operation duration**: `histogram_quantile(0.99, rate(redis_operation_duration_seconds_bucket[5m]))` por operación (GET, SET, DEL). Permite detectar degradación de Redis antes de que impacte a los usuarios.
 
-**Pasos de implementación:**
+5. **Pod replicas y HPA**: `kube_horizontalpodautoscaler_status_current_replicas` vs `spec_max_replicas`. Muestra cuánto margen de escalado queda disponible.
 
-1. Almacenar los secretos en AWS Secrets Manager.
-2. Crear un recurso `ExternalSecret` en Kubernetes.
-3. El operador sincroniza el valor real de forma automática.
-4. Los secretos rotan sin necesidad de modificar el código ni los manifiestos.
+6. **Users total (métrica de negocio)**: `users_total`. Gauge simple que muestra la cantidad de usuarios en el sistema. Útil para correlacionar picos de carga con crecimiento de datos.
 
-### Prácticas que deben evitarse
-
-- Hardcodear secretos en el código fuente o en Dockerfiles.
-- Incluir archivos `.env` reales en el repositorio.
-- Usar la etiqueta `latest` en imágenes de producción.
-- Almacenar secretos en ConfigMaps.
+7. **CPU y memoria por pod**: `rate(process_cpu_seconds_total[1m])` y `process_resident_memory_bytes`. Permite detectar fugas de memoria o procesos que consumen más de lo esperado.
 
 ---
 
-## 6. Optimización de costos
+## Distributed Tracing (Bonus)
 
-Consideraciones aplicables si el sistema pasa a un entorno productivo:
+La trazabilidad básica está implementada mediante propagación de `X-Request-ID`. El api-gateway genera un ID único por request con `generateRequestId()` (timestamp en base36 + random) y lo propaga al user-service via header `X-Request-ID`. Todos los logs de ambos servicios incluyen este ID, permitiendo correlacionar el recorrido completo de una request en CloudWatch Log Insights o Grafana Loki.
 
-- Usar **KEDA** para escalar a cero en horarios de baja carga.
-- Ajustar correctamente los valores de `requests` y `limits` por pod.
-- Utilizar instancias **Spot** para cargas de trabajo no críticas.
-- Revisar las métricas del HPA de forma periódica.
-- Implementar herramientas de cost attribution por servicio.
+Para trazas distribuidas completas, la implementación se haría con **OpenTelemetry**:
 
----
+```
+api-gateway ──(OTLP)──▶ OTel Collector ──▶ AWS X-Ray / Jaeger
+     │
+user-service ──(OTLP)──▶ OTel Collector
+```
 
-## Conclusión
-
-La estrategia de observabilidad cubre los aspectos esenciales de un sistema en producción:
-
-- Métricas con visibilidad sobre el modelo RED.
-- Logs estructurados con correlación de requests.
-- Trazas distribuidas mediante OpenTelemetry.
-- Alertas enfocadas en síntomas de problemas reales.
-- Gestión segura de secretos con rotación automática.
-
-Es una base sólida y extensible, lista para crecer en complejidad según las necesidades del entorno.
+Cada span capturaría: método HTTP, ruta, status code, duración, `request_id` y propagación del `traceparent` header entre servicios. Esto permitiría ver en un solo trace el tiempo total de una request, desglosado por api-gateway, llamada al user-service y operación Redis.
