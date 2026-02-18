@@ -11,5 +11,9 @@ spec:
     app: user-service
   ports:
     - port: 3001
+
+# FIX BUG 6:
+# El contenedor escucha en el puerto 3001, que es el puerto configurado en la aplicación, y que debe coincidir con el puerto definido en el Service para que la comunicación funcione correctamente.
+
       targetPort: 3001
       name: http

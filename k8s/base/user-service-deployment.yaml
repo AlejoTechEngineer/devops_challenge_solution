@@ -26,27 +26,29 @@ spec:
         tier: backend
 
       # Prometheus scrapea métricas directamente desde el pod
+
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3001"
         prometheus.io/path: "/metrics"
 
     spec:
+      
       # Damos tiempo a que termine requests en vuelo antes de apagar el pod
+
       terminationGracePeriodSeconds: 30
 
       # Ejecutamos como usuario no-root por seguridad
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
 
-      # ═══════════════════════════════════════════════════════════════════════
       # Init Container: Espera a que Redis esté disponible antes de arrancar
-      # Esto elimina el restart inicial que ocurre cuando user-service arranca
-      # antes que Redis esté ready
-      # ═══════════════════════════════════════════════════════════════════════
+      # Esto elimina el restart inicial que ocurre cuando user-service arranca antes que Redis esté ready
+      
       initContainers:
         - name: wait-for-redis
           image: busybox:1.36
@@ -59,7 +61,7 @@ spec:
                 echo "Redis is not ready yet, sleeping 2s..."
                 sleep 2
               done
-              echo "✅ Redis is ready! Starting user-service..."
+              echo "Redis is ready! Starting user-service..."
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
@@ -73,12 +75,17 @@ spec:
           image: ghcr.io/vipmed-technology/user-service:latest
           imagePullPolicy: Always
 
+          # FIX BUG 6:
+          # El contenedor escucha en el puerto 3001, que es el puerto configurado en la aplicación, y que debe coincidir con el puerto definido en el Service para que la comunicación funcione correctamente.
+
           ports:
             - containerPort: 3001
               name: http
 
           env:
+            
             # Configuración no sensible desde ConfigMap
+
             - name: PORT
               valueFrom:
                 configMapKeyRef:
@@ -104,6 +111,7 @@ spec:
                   key: APP_VERSION
 
             # Password de Redis desde Secret
+
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -111,6 +119,12 @@ spec:
                   key: redis-password
 
             # URL completa de Redis construida con la password
+            # FIX BUG 4: 
+            # El hostname correcto dentro del cluster es redis, ademas apunta al service llamado redis en la linea de codigo value: "redis://:$(REDIS_PASSWORD)@redis:6379" Porque ahí se usa el hostname correcto.
+            # No usa localhost
+            # No está usando 127.0.0.1
+            # No está usando redis-service
+
             - name: REDIS_URL
               value: "redis://:$(REDIS_PASSWORD)@redis:6379"
 
@@ -124,6 +138,12 @@ spec:
 
           # Liveness probe: el proceso sigue vivo?
           # Si falla → Kubernetes reinicia el contenedor
+          # FIX BUG 5:
+          # Kubernetes permite 3 fallos seguidos antes de reiniciar el contenedor, lo que da margen para manejar picos temporales o problemas momentáneos sin causar reinicios innecesarios.
+          # El fix del bug esta en livenessProbe en failureThreshold: 3, que es un valor razonable para aplicaciones Node.js que pueden experimentar picos de CPU ocasionales durante el procesamiento de solicitudes.
+          # El fix del bug tambien esta en readinessProbe en failureThreshold: 3, que es un valor razonable para aplicaciones Node.js que pueden experimentar picos de CPU ocasionales durante el procesamiento de solicitudes, evitando marcar el servicio como no listo por problemas momentáneos.
+          # El fix del bug tambien esta en startupProbe en failureThreshold: 12, que da un margen amplio para que la aplicación termine de arrancar, especialmente si tiene tareas de inicialización que pueden tardar más de lo normal, evitando reinicios prematuros durante el arranque inicial
+
           livenessProbe:
             httpGet:
               path: /health/live
@@ -135,6 +155,7 @@ spec:
 
           # Readiness probe: puede recibir tráfico?
           # Si Redis cae, deja de recibir requests pero no se reinicia
+
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -145,6 +166,7 @@ spec:
             failureThreshold: 3
 
           # Startup probe: le da margen al pod en el arranque inicial
+
           startupProbe:
             httpGet:
               path: /health/live
@@ -154,6 +176,7 @@ spec:
             failureThreshold: 12   # 12 * 5s = 60s máximo
 
           # Hardening extra del contenedor
+
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

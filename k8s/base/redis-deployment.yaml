@@ -38,6 +38,8 @@ spec:
           # FIX BUG 8:
           # El password ya NO está en ConfigMap.
           # Se obtiene desde Kubernetes Secret (app-secrets).
+          # FIX BUG 7:
+          # El siguiente codigo activa autenticación obligatoria. Si la app no usa: redis://:<password>@redis:6379 O no configura password en el cliente se genera error de autenticación.
 
           command:
             - redis-server
